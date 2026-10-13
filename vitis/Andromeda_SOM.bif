@@ -1,0 +1,8 @@
+//arch = zynqmp; split = false; format = BIN
+// Paths are relative to the Vitis workspace directory
+the_ROM_image:
+{
+	[bootloader]Andromeda_SOM/export/Andromeda_SOM/sw/Andromeda_SOM/boot/fsbl.elf
+	[destination_device = pl]Andromeda_SOM/hw/fpga.bit
+	[pmufw_image]Andromeda_SOM/export/Andromeda_SOM/sw/Andromeda_SOM/boot/pmufw.elf
+}

@@ -1,0 +1,26 @@
+# Vitis workspace: only the Andromeda_SOM platform component is tracked
+/*
+!/.gitignore
+!/regen_bsp.tcl
+!/Andromeda_SOM.bif
+!/Andromeda_SOM/
+
+# Build outputs
+*.o
+*.d
+*.a
+*.elf
+*.bit
+*.bin
+export/
+tempdsa/
+logs/
+.log/
+
+# Extracted from hw/fpga.xsa when the platform is built
+/Andromeda_SOM/hw/*
+!/Andromeda_SOM/hw/*.xsa
+
+# BSP sources, regenerated with "Reset BSP Sources" on each domain
+libsrc/
+/Andromeda_SOM/**/psu_*/include/
