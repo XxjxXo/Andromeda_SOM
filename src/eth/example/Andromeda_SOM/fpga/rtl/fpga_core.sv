@@ -1053,72 +1053,114 @@ for (genvar n = 0; n < 1; n = n + 1) begin : gt_quad
 
 end
 
+//for (genvar n = 0; n < $size(axis_qsfp_tx); n = n + 1) begin : qsfp_ch
+
+//    wire ch_good_frame;
+
+//    // stretch good frame pulses for RX activity LED (about 200 ms)
+//    logic [25:0] act_cnt_reg = '0;
+//    logic act_reg = 1'b0;
+
+//    always_ff @(posedge qsfp_tx_clk[n]) begin
+//        if (ch_good_frame) begin
+//            act_cnt_reg <= '1;
+//        end else if (act_cnt_reg != 0) begin
+//            act_cnt_reg <= act_cnt_reg - 1;
+//        end
+//        act_reg <= ch_good_frame || act_cnt_reg != 0;
+//    end
+
+//    assign qsfp_rx_act[n] = act_reg;
+
+//    taxi_axis_async_fifo #(
+//        .DEPTH(16384),
+//        .RAM_PIPELINE(2),
+//        .FRAME_FIFO(1),
+//        .USER_BAD_FRAME_VALUE(1'b1),
+//        .USER_BAD_FRAME_MASK(1'b1),
+//        .DROP_OVERSIZE_FRAME(1),
+//        .DROP_BAD_FRAME(1),
+//        .DROP_WHEN_FULL(1)
+//    )
+//    ch_fifo (
+//        /*
+//         * AXI4-Stream input (sink)
+//         */
+//        .s_clk(qsfp_rx_clk[n]),
+//        .s_rst(qsfp_rx_rst[n]),
+//        .s_axis(axis_qsfp_rx[n]),
+
+//        /*
+//         * AXI4-Stream output (source)
+//         */
+//        .m_clk(qsfp_tx_clk[n]),
+//        .m_rst(qsfp_tx_rst[n]),
+//        .m_axis(axis_qsfp_tx[n]),
+
+//        /*
+//         * Pause
+//         */
+//        .s_pause_req(1'b0),
+//        .s_pause_ack(),
+//        .m_pause_req(1'b0),
+//        .m_pause_ack(),
+
+//        /*
+//         * Status
+//         */
+//        .s_status_depth(),
+//        .s_status_depth_commit(),
+//        .s_status_overflow(),
+//        .s_status_bad_frame(),
+//        .s_status_good_frame(),
+//        .m_status_depth(),
+//        .m_status_depth_commit(),
+//        .m_status_overflow(),
+//        .m_status_bad_frame(),
+//        .m_status_good_frame(ch_good_frame)
+//    );
+
+//end
+
+
+// =============================================================================
+// REEMPLAZO DEL LOOPBACK FIFO: GENERACIÓN AUTÓNOMA DE TRACAS UDP A VELOCIDAD DE LÍNEA
+// =============================================================================
+
 for (genvar n = 0; n < $size(axis_qsfp_tx); n = n + 1) begin : qsfp_ch
 
-    wire ch_good_frame;
-
-    // stretch good frame pulses for RX activity LED (about 200 ms)
-    logic [25:0] act_cnt_reg = '0;
-    logic act_reg = 1'b0;
-
-    always_ff @(posedge qsfp_tx_clk[n]) begin
-        if (ch_good_frame) begin
-            act_cnt_reg <= '1;
-        end else if (act_cnt_reg != 0) begin
-            act_cnt_reg <= act_cnt_reg - 1;
-        end
-        act_reg <= ch_good_frame || act_cnt_reg != 0;
-    end
-
-    assign qsfp_rx_act[n] = act_reg;
-
-    taxi_axis_async_fifo #(
-        .DEPTH(16384),
-        .RAM_PIPELINE(2),
-        .FRAME_FIFO(1),
-        .USER_BAD_FRAME_VALUE(1'b1),
-        .USER_BAD_FRAME_MASK(1'b1),
-        .DROP_OVERSIZE_FRAME(1),
-        .DROP_BAD_FRAME(1),
-        .DROP_WHEN_FULL(1)
+    // Instancia del generador autónomo UDP/IP
+    udp_packet_generator_top #(
+        .MAC_DATA_W(MAC_DATA_W),        // Ajuste automático según 100G (512b) o 25G (64b)
+        .DATA_W(MAC_DATA_W),
+        .TX_RAM_SIZE(32768)
     )
-    ch_fifo (
-        /*
-         * AXI4-Stream input (sink)
-         */
-        .s_clk(qsfp_rx_clk[n]),
-        .s_rst(qsfp_rx_rst[n]),
-        .s_axis(axis_qsfp_rx[n]),
+    udp_gen_inst (
+        .clk(qsfp_tx_clk[n]),
+        .rst(qsfp_tx_rst[n]),
+        .mac_tx_clk(qsfp_tx_clk[n]),
+        .mac_tx_rst(qsfp_tx_rst[n]),
 
-        /*
-         * AXI4-Stream output (source)
-         */
-        .m_clk(qsfp_tx_clk[n]),
-        .m_rst(qsfp_tx_rst[n]),
-        .m_axis(axis_qsfp_tx[n]),
+        // Disparo permanente en '1' para saturación contínua a velocidad de línea (Line-Rate)
+        .trigger_start(1'b1),
+        .pkt_len_bytes(16'd8960),       // Tamaño del payload en bytes por paquete
 
-        /*
-         * Pause
-         */
-        .s_pause_req(1'b0),
-        .s_pause_ack(),
-        .m_pause_req(1'b0),
-        .m_pause_ack(),
+        // Direcciones de red parametrizables por canal 'n'
+        .src_mac(48'h80_23_31_43_54_4C + n),
+        .dest_mac(48'hFF_FF_FF_FF_FF_FF), // Reemplazar con la MAC real de la NIC de tu PC
+        .src_ip({8'(10 * (n + 1)), 8'd0, 8'd0, 8'd2}),
+        .dest_ip({8'(10 * (n + 1)), 8'd0, 8'd0, 8'd1}),
+        .src_port(16'd5005 + n),
+        .dest_port(16'd5005),
 
-        /*
-         * Status
-         */
-        .s_status_depth(),
-        .s_status_depth_commit(),
-        .s_status_overflow(),
-        .s_status_bad_frame(),
-        .s_status_good_frame(),
-        .m_status_depth(),
-        .m_status_depth_commit(),
-        .m_status_overflow(),
-        .m_status_bad_frame(),
-        .m_status_good_frame(ch_good_frame)
+        // Conexión AXI4-Stream directa a la entrada de la MAC QSFP28
+        .m_axis_mac_tx(axis_qsfp_tx[n]),
+        .s_axis_mac_tx_cpl(axis_qsfp_tx_cpl[n])
     );
+
+    // Liberación del canal RX (sumidero directo para evitar desbordamiento)
+    assign axis_qsfp_rx[n].tready = 1'b1;
+    assign qsfp_rx_act[n] = 1'b0;
 
 end
 

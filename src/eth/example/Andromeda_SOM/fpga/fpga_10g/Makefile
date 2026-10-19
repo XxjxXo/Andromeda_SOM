@@ -28,6 +28,14 @@ SYN_FILES += $(TAXI_SRC_DIR)/lss/rtl/taxi_mdio_master.sv
 SYN_FILES += $(TAXI_SRC_DIR)/sync/rtl/taxi_sync_reset.sv
 SYN_FILES += $(TAXI_SRC_DIR)/sync/rtl/taxi_sync_signal.sv
 SYN_FILES += $(TAXI_SRC_DIR)/io/rtl/taxi_debounce_switch.sv
+SYN_FILES += $(TAXI_SRC_DIR)/eth/rtl/us/taxi_eth_phy_10g_us_gt_ll.f
+SYN_FILES += $(RTL_DIR)/udp_packet_generator_top.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_len_cksum.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_buffer.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_deparse.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_egress.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_ingress.sv
+SYN_FILES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_concat.sv
 
 # XDC files
 XDC_FILES += ../syn/fpga.xdc

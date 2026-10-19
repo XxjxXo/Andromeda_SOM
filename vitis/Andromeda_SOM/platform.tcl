@@ -42,3 +42,9 @@ domain active {zynqmp_pmufw}
 bsp reload
 catch {bsp regenerate}
 platform generate -domains standalone_domain,zynqmp_fsbl,zynqmp_pmufw 
+platform generate
+platform generate
+platform generate
+platform generate
+platform generate
+platform generate

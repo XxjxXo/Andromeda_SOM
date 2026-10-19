@@ -6,6 +6,10 @@
 # Usage: ./build_10g.sh
 #
 # Set XILINX_VERSION or XILINX_DIR to use a different Xilinx installation
+# 
+# Test the connection with the board using the following command:
+# tcpdump -i <if> -e -nn udp port 5005
+
 
 set -e
 
@@ -22,7 +26,6 @@ fi
 if ! command -v xsct > /dev/null; then
     source "$XILINX_DIR/Vitis/$XILINX_VERSION/settings64.sh"
 fi
-
 make -C "$FPGA_DIR/fpga_10g"
 
 xsct "$VITIS_DIR/regen_bsp.tcl" "$FPGA_DIR/fpga_10g/fpga.xsa"
