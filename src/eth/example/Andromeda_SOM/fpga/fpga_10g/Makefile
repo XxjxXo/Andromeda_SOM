@@ -36,6 +36,11 @@ SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_deparse.sv
 SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_egress.sv
 SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_ingress.sv
 SYN_FILES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_concat.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_rx_egress.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_rx_ingress.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_rx_parse.sv
+SYN_FILES += $(RTL_DIR)/udp_packet_receiver_top.sv
+SYN_FILES += $(RTL_DIR)/udp_payload_extractor.sv
 
 # XDC files
 XDC_FILES += ../syn/fpga.xdc
