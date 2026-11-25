@@ -1,4 +1,35 @@
 # ETAPA 2
+## LFSR con 4x 10Gbps
+```console
+Listening on UDP port 5005, CPUs 1-1, checking 1 of every 1 packet(s)
+Detected PRBS31: bit-reversed in 4-byte blocks, taps 31/28 (0 errors in the first 8960-byte packet)
+    1.0s    187048 pkt/s   13.41 Gb/s  errors        0 | pkts 187072  err pkts 0  err bits 0  BER 0.00e+00
+    2.0s    190557 pkt/s   13.66 Gb/s  errors        0 | pkts 377664  err pkts 0  err bits 0  BER 0.00e+00
+    3.0s    190372 pkt/s   13.65 Gb/s  errors        0 | pkts 568064  err pkts 0  err bits 0  BER 0.00e+00
+    4.0s    189988 pkt/s   13.62 Gb/s  errors        0 | pkts 758080  err pkts 0  err bits 0  BER 0.00e+00
+    5.0s    189606 pkt/s   13.59 Gb/s  errors        0 | pkts 947712  err pkts 0  err bits 0  BER 0.00e+00
+    6.0s    189283 pkt/s   13.57 Gb/s  errors        0 | pkts 1137024  err pkts 0  err bits 0  BER 0.00e+00
+    7.0s    189153 pkt/s   13.56 Gb/s  errors        0 | pkts 1326208  err pkts 0  err bits 0  BER 0.00e+00
+    8.0s    188513 pkt/s   13.51 Gb/s  errors        0 | pkts 1514752  err pkts 0  err bits 0  BER 0.00e+00
+    9.0s    188324 pkt/s   13.50 Gb/s  errors        0 | pkts 1703104  err pkts 0  err bits 0  BER 0.00e+00
+   10.0s    188899 pkt/s   13.54 Gb/s  errors        0 | pkts 1892032  err pkts 0  err bits 0  BER 0.00e+00
+   11.0s    187620 pkt/s   13.45 Gb/s  errors        0 | pkts 2079680  err pkts 0  err bits 0  BER 0.00e+00
+   12.0s    188256 pkt/s   13.49 Gb/s  errors        0 | pkts 2267968  err pkts 0  err bits 0  BER 0.00e+00
+   13.0s    187302 pkt/s   13.43 Gb/s  errors        0 | pkts 2455296  err pkts 0  err bits 0  BER 0.00e+00
+   14.0s    188131 pkt/s   13.49 Gb/s  errors        0 | pkts 2643456  err pkts 0  err bits 0  BER 0.00e+00
+   15.0s    187876 pkt/s   13.47 Gb/s  errors        0 | pkts 2831360  err pkts 0  err bits 0  BER 0.00e+00
+   16.0s    187554 pkt/s   13.44 Gb/s  errors        0 | pkts 3018944  err pkts 0  err bits 0  BER 0.00e+00
+^C   16.5s    188189 pkt/s   13.49 Gb/s  errors        0 | pkts 3120832  err pkts 0  err bits 0  BER 0.00e+00
+
+Packets 3120896, bytes 27963228160, checked bytes 27963228160, packets with errors 0, short packets 0
+Recurrence errors 0, approx. BER 0.000e+00
+No errors in 2.237e+11 checked bits: BER < 1.3e-11 (95% confidence, 3/bits)
+```
+
+![alt text](10G_IF0.png) 
+![alt text](10G_IF1.png) 
+![alt text](10G_IF3.png) 
+![alt text](10G_IF4.png)
 # ETAPA 3
 ## Errores BER
 ```console
