@@ -3,8 +3,11 @@
  * Fast UDP receiver and PRBS31 checker for udp_packet_generator_top.
  *
  * - recvmmsg() batches, large socket buffer
- * - optional N threads with SO_REUSEPORT (only helps if the traffic has
- *   several flows: a single UDP flow always lands on one RX queue / socket)
+ * - -j N: N threads, thread i listens on port + i. The 100G generator sends
+ *   FLOW_CNT = 8 flows with destination ports 5005..5012, so -j 8 gives one
+ *   socket and one core per flow (the NIC spreads the flows over its RX
+ *   queues with RSS, or with ntuple rules, see CHANGES_Etapa_3.md)
+ * - -c CPU: pin thread i to CPU + i
  * - PRBS31 check (x^31 + x^28 + 1) per packet with the self-synchronising
  *   recurrence b[n] ^ b[n-31] ^ b[n-t] = 0, done on 64-bit words; the bit
  *   order and tap orientation are detected on the first packet
@@ -19,8 +22,8 @@
  * at the end is already divided by 3.
  *
  * Build: gcc -O3 -march=native -pthread -o udp_lfsr_rx udp_lfsr_rx.c
- * Usage: ./udp_lfsr_rx [-p port] [-j threads] [-s sample] [-t seconds]
- *                      [-w block_bytes] [-T] [-f payload_file]
+ * Usage: ./udp_lfsr_rx [-p port] [-j threads] [-c first_cpu] [-s sample]
+ *                      [-t seconds] [-w block_bytes] [-T] [-f payload_file]
  *   -f  check a raw payload file instead of listening (detection only)
  *   -T  self test (no network)
  */
@@ -30,6 +33,7 @@
 #include <getopt.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stddef.h>
@@ -47,6 +51,7 @@
 
 static int port = 5005;
 static int nthreads = 1;
+static int first_cpu = -1;
 static int sample = 1;
 static int force_blk = -1;
 static double duration = 0;
@@ -219,6 +224,14 @@ static void *rx_thread(void *arg)
     int id = (int)(intptr_t)arg;
     struct stats *s = &st[id];
 
+    if (first_cpu >= 0) {
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        CPU_SET(first_cpu + id, &set);
+        if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) != 0)
+            fprintf(stderr, "thread %d: could not pin to CPU %d\n", id, first_cpu + id);
+    }
+
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
         perror("socket");
@@ -233,8 +246,9 @@ static void *rx_thread(void *arg)
     struct timeval tv = { .tv_sec = 0, .tv_usec = 200000 };
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(port), .sin_addr.s_addr = INADDR_ANY };
+    struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(port + id), .sin_addr.s_addr = INADDR_ANY };
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        fprintf(stderr, "port %d: ", port + id);
         perror("bind");
         exit(1);
     }
@@ -376,17 +390,21 @@ int main(int argc, char **argv)
     int test = 0;
     init_rev8();
     const char *file = NULL;
-    while ((opt = getopt(argc, argv, "p:j:s:t:w:f:Th")) != -1) {
+    while ((opt = getopt(argc, argv, "p:j:c:s:t:w:f:Th")) != -1) {
         switch (opt) {
         case 'p': port = atoi(optarg); break;
         case 'j': nthreads = atoi(optarg); break;
+        case 'c': first_cpu = atoi(optarg); break;
         case 's': sample = atoi(optarg); break;
         case 't': duration = atof(optarg); break;
         case 'w': force_blk = atoi(optarg); break;
         case 'f': file = optarg; break;
         case 'T': test = 1; break;
         default:
-            fprintf(stderr, "Usage: %s [-p port] [-j threads] [-s sample] [-t seconds] [-w block_bytes] [-T]\n"
+            fprintf(stderr, "Usage: %s [-p port] [-j threads] [-c first_cpu] [-s sample] [-t seconds]\n"
+                    "          [-w block_bytes] [-f payload_file] [-T]\n"
+                    "  -j  N threads, thread i listens on port + i (one per flow)\n"
+                    "  -c  pin thread i to CPU first_cpu + i\n"
                     "  -w  bit-reverse blocks of this many bytes (64 for 100G, 4 for 10G, 0 none); default auto\n",
                     argv[0]);
             return 1;
@@ -416,13 +434,20 @@ int main(int argc, char **argv)
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
 
-    printf("Listening on UDP port %d, %d thread(s), checking 1 of every %d packet(s)\n", port, nthreads, sample);
+    if (nthreads > 1)
+        printf("Listening on UDP ports %d-%d, one thread per port", port, port + nthreads - 1);
+    else
+        printf("Listening on UDP port %d", port);
+    if (first_cpu >= 0)
+        printf(", CPUs %d-%d", first_cpu, first_cpu + nthreads - 1);
+    printf(", checking 1 of every %d packet(s)\n", sample);
     pthread_t th[MAX_THR];
     for (int i = 0; i < nthreads; i++)
         pthread_create(&th[i], NULL, rx_thread, (void *)(intptr_t)i);
 
     double t0 = now_s(), tl = t0;
     uint64_t lp = 0, lb = 0, le = 0;
+    uint64_t lbt[MAX_THR] = { 0 };
     while (!stop_flag) {
         usleep(1000000);
         double t = now_s();
@@ -438,6 +463,15 @@ int main(int argc, char **argv)
         printf("%7.1fs %9.0f pkt/s %7.2f Gb/s  errors %8lu | pkts %lu  err pkts %lu  err bits %lu  BER %.2e\n",
                t - t0, (p - lp) / dt, (b - lb) * 8 / dt / 1e9, (unsigned long)(e - le),
                (unsigned long)p, (unsigned long)ep, (unsigned long)e, cb ? e / 3.0 / (cb * 8.0) : 0.0);
+        if (nthreads > 1) {
+            printf("         per port Gb/s:");
+            for (int i = 0; i < nthreads; i++) {
+                uint64_t bt = atomic_load(&st[i].bytes);
+                printf(" %d:%.1f", port + i, (bt - lbt[i]) * 8 / dt / 1e9);
+                lbt[i] = bt;
+            }
+            printf("\n");
+        }
         fflush(stdout);
         lp = p;
         lb = b;
@@ -457,6 +491,12 @@ int main(int argc, char **argv)
         e += st[i].err_bits;
         ep += st[i].err_pkts;
         sp += st[i].short_pkts;
+    }
+    if (nthreads > 1) {
+        printf("\n");
+        for (int i = 0; i < nthreads; i++)
+            printf("Port %d: packets %lu, errors %lu, packets with errors %lu\n", port + i,
+                   (unsigned long)st[i].pkts, (unsigned long)st[i].err_bits, (unsigned long)st[i].err_pkts);
     }
     printf("\nPackets %lu, bytes %lu, checked bytes %lu, packets with errors %lu, short packets %lu\n",
            (unsigned long)p, (unsigned long)b, (unsigned long)cb, (unsigned long)ep, (unsigned long)sp);

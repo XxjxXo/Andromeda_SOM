@@ -596,10 +596,13 @@ for (genvar n = 0; n < 1; n = n + 1) begin : gt_quad
             // GT config
             .CFG_LOW_LATENCY(CFG_LOW_LATENCY),
 
-            // GT TX swing and de-emphasis (Taxi defaults), RX in DFE mode
-            // (RX alignment verified on the PE5 with this setting)
-            .GT_TX_DIFFCTRL('{CNT{5'd16}}),
-            .GT_TX_POSTCURSOR('{CNT{5'd0}}),
+            // GT TX swing and de-emphasis for the SOM + PE5 + QSFP28 channel at
+            // 25.78 Gb/s: with the Taxi defaults (16/0/0) the eye at the module
+            // input is closed and the link partner never syncs. 20/16/0 found by
+            // sweeping from the VIO (raw BER 1e-11 before RS-FEC).
+            // RX in DFE mode.
+            .GT_TX_DIFFCTRL('{CNT{5'd20}}),
+            .GT_TX_POSTCURSOR('{CNT{5'd16}}),
             .GT_TX_PRECURSOR('{CNT{5'd0}}),
             .GT_RX_LPM_EN('0),
 
@@ -1340,7 +1343,10 @@ for (genvar n = 0; n < $size(axis_qsfp_tx); n = n + 1) begin : qsfp_ch
     udp_packet_generator_top #(
         .MAC_DATA_W(MAC_DATA_W),        // Ajuste automático según 100G (512b) o 25G (64b)
         .DATA_W(MAC_DATA_W),
-        .TX_RAM_SIZE(32768)
+        .TX_RAM_SIZE(32768),
+        // 100G: 8 flujos (puerto destino 5005-5012) para repartir la recepción
+        // entre 8 colas / cores en el PC; 10G: un flujo por carril
+        .FLOW_CNT(MAC_DATA_W == 512 ? 8 : 1)
     )
     udp_gen_inst (
         .clk(qsfp_tx_clk[n]),

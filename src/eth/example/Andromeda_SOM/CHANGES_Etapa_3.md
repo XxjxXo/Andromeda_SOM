@@ -1,12 +1,12 @@
 # Enlace 100GBASE-SR4 con la CMAC y generador UDP a 100 Gb/s
 
-Este documento recoge los cambios del árbol de trabajo respecto al commit `aa6f080` ("Zircon udp RX datapath not yet tested"). La etapa 2 dejaba el generador UDP funcionando a 4 × 10G con el PHY de Taxi. En esta etapa se pasa a un único enlace de 100G con la MAC hard (CMAC) del dispositivo.
+Este documento recoge los cambios respecto al commit `aa6f080` ("Zircon udp RX datapath not yet tested"): el commit `8795396` ("100Gbps with UDP/IP Working") y, sobre él, el reparto del tráfico en 8 flujos UDP (apartado 3.8). La etapa 2 dejaba el generador UDP funcionando a 4 × 10G con el PHY de Taxi. En esta etapa se pasa a un único enlace de 100G con la MAC hard (CMAC) del dispositivo.
 
 - **Hardware destino**: SOM Enclustra Andromeda XZU90 (XCZU17EG-1FFVD1760E) sobre placa base Andromeda PE5.
 - **Función**: un enlace 100GBASE-SR4 (4 × 25,78125 Gb/s NRZ, RS-FEC CL91) por el QSFP28 de la PE5. El generador UDP de la etapa 2 transmite tramas jumbo con payload PRBS31 a velocidad de línea.
 - **Configuración construida**: `fpga` (CMACE4_X0Y1, bus LBUS de 512 bits a 322,266 MHz, GTY con buffer de TX: `CFG_LOW_LATENCY = 0`). Se compila con `./build_100g.sh`.
 - **Equipo remoto**: PC con NVIDIA ConnectX-6 Dx MCX623106AN-CDA (QSFP56, driver `mlx5_core`, firmware 22.43.2566), interfaz `enp4s0f0np0`, módulos FS QSFP-SR4-100G y latiguillo MTP/MPO-12 tipo B.
-- **Estado**: enlace `Active` a 100G con RS-FEC. `bmon` mide **12,46 GB/s** en recepción, que es la velocidad de línea (ver parte 6). La ecualización de TX que hace funcionar el enlace se aplica de momento desde el VIO; falta fijarla en el build (ver parte 8).
+- **Estado**: enlace `Active` a 100G con RS-FEC. El PC recibe y comprueba el payload completo, repartido en 8 flujos: **99,22 Gb/s** de payload UDP (el 99,95 % del máximo teórico) y **0 errores** en 1,58·10¹² bits (BER < 1,9·10⁻¹² con un 95 % de confianza). BER bruto antes del FEC: 1·10⁻¹¹. Ver parte 6. Las medidas se hicieron con la ecualización de TX aplicada desde el VIO; ya está fijada en el build (`diffctrl` 20, post-cursor 16, ver 3.4), pendiente de probar en placa sin el VIO.
 
 Las rutas son relativas a `src/eth/example/Andromeda_SOM/fpga/` salvo que se indique otra cosa.
 
@@ -18,16 +18,19 @@ Las rutas son relativas a `src/eth/example/Andromeda_SOM/fpga/` salvo que se ind
 |---|---|
 | `fpga/Makefile` | Adaptado al XCZU17EG (`FPGA_PART`, `FPGA_ARCH`). Añade el block design del PS, el generador y la pila Zircon, las IPs de depuración (`ila_cmac`, `vio_cmac`) y `syn/debug.xdc`. Eliminados los objetivos `flash`/`mcs` de la VCU118. |
 | `fpga/config.tcl` | `CFG_LOW_LATENCY` de `1` a `0` (GTY con buffer de TX, ver 3.5). |
-| `rtl/fpga_core.sv` | LEDs de depuración del TX, parámetros de ecualización del GT, quitado el `BUFG_GT` de la refclk (3.6), y bloque de depuración con VIO, dos ILAs y contadores de frecuencia (parte 4). |
+| `rtl/fpga_core.sv` | LEDs de depuración del TX, ecualización de TX del GT fijada a `diffctrl` 20 y post-cursor 16 (3.4), quitado el `BUFG_GT` de la refclk (3.6), bloque de depuración con VIO, dos ILAs y contadores de frecuencia (parte 4), y `FLOW_CNT = 8` en el generador de 100G (3.8). |
+| `rtl/udp_packet_generator_top.sv` | Nuevo parámetro `FLOW_CNT` (1 por defecto): el puerto destino rota paquete a paquete entre `dest_port` y `dest_port + FLOW_CNT − 1` (3.8). |
 | `rtl/fpga.sv` | Nuevo significado de los LEDs 2 y 3 (parte 4). |
 | `syn/eth_cmac.xdc` | Solo la CMAC `CMACE4_X0Y1`, la más cercana a los GTY X0Y8–X0Y11. |
 | `syn/debug.xdc` | **Nuevo**. Fija el reloj del `dbg_hub` a `clk_125mhz`. |
 | `ip/ila_cmac.tcl`, `ip/vio_cmac.tcl` | **Nuevos**. IPs de depuración. |
 | `build_10g.sh` | Admite como argumento el directorio de build (`fpga_10g` por defecto, o `fpga`). |
 | `build_100g.sh` | **Nuevo**. Llama a `build_10g.sh fpga`. |
-| `udp_lfsr_rx.c` | **Nuevo**. Receptor UDP y comprobador del PRBS31 para el PC (parte 7). |
+| `udp_lfsr_rx.c` | **Nuevo**. Receptor UDP y comprobador del PRBS31 para el PC, con un hilo por flujo (parte 7). |
 | `doc/Medidas.md`, `doc/BMON_100Gbps.png` | **Nuevos**. Medidas en el PC. |
-| `doc/tx_10g_dataflow.tex`, `doc/tx_100g_dataflow.tex` | **Nuevos**. Diagramas TikZ del flujo de TX. |
+| `doc/rxtx_10g_loopback.tex` | **Nuevo**. Diagrama TikZ del loopback de la etapa 1 (FIFO asíncrona RX → TX por carril). |
+| `doc/tx_10g_dataflow.tex` | **Nuevo**. Diagrama TikZ del flujo de TX a 4 × 10G (etapa 2). |
+| `doc/tx_100g_dataflow_1_flux.tex`, `doc/tx_100g_dataflow_8_flux.tex` | **Nuevos**. Diagramas TikZ del flujo de TX a 100G, con un flujo UDP y con 8 flujos (puerto destino rotativo y reparto en el PC). |
 
 ### Librería Taxi (`src/eth/rtl/us/`, fuera del ejemplo)
 
@@ -121,7 +124,13 @@ Era el problema principal. Con 3.1 y 3.3 resueltos:
 
 **Causa**: lo único que el loopback near-end no recorre es el tramo eléctrico de TX: el driver del GTY, las pistas de la SOM, el conector a la PE5, las pistas de la PE5 y el conector del QSFP28. A 25,78 Gb/s (Nyquist a 12,9 GHz) ese canal atenúa mucho las altas frecuencias y cierra el ojo. La CDR del módulo se engancha igualmente, pero retransmite demasiados errores para el RS-FEC. Con la ecualización por defecto de Taxi (`diffctrl` 16, post-cursor 0, pre-cursor 0), el ojo llegaba cerrado.
 
-**Solución**: subir el **post-cursor** (de-énfasis) de la FFE de TX del GTY. Resta al bit actual una fracción del anterior: los bits repetidos salen con menos amplitud y las transiciones con la amplitud completa. Funciona como un filtro paso-alto que compensa el paso-bajo del canal. Los valores se encontraron barriendo desde el VIO en modo far-end PMA y modo normal (parte 4).
+**Solución**: subir el **post-cursor** (de-énfasis) de la FFE de TX del GTY. Resta al bit actual una fracción del anterior: los bits repetidos salen con menos amplitud y las transiciones con la amplitud completa. Funciona como un filtro paso-alto que compensa el paso-bajo del canal. Los valores se encontraron barriendo desde el VIO en modo far-end PMA y modo normal (parte 4), y se han fijado en `fpga_core.sv` para los 4 carriles:
+
+| Parámetro | Taxi por defecto | Ahora |
+|---|---|---|
+| `GT_TX_DIFFCTRL` (amplitud) | 16 | **20** |
+| `GT_TX_POSTCURSOR` (de-énfasis) | 0 | **16** |
+| `GT_TX_PRECURSOR` | 0 | 0 |
 
 Por qué no se había visto antes:
 
@@ -153,15 +162,21 @@ Los critical warnings *"Could not find module `taxi_eth_mac_100g_us_gty_ll_full`
 
 **Causa**: `taxi_lfsr` desplaza **MSB primero** ("Shifts MSB first by default"). En cada palabra de 512 bits del generador, el bit 511 es el primero de la secuencia en el tiempo. En cambio, la MAC transmite primero `tdata[7:0]`. Dentro de cada bloque de 64 bytes del payload la secuencia va invertida. La recurrencia del PRBS31 solo fallaba en las 139 fronteras entre palabras (unos 15 errores por frontera).
 
-**Solución**: `udp_lfsr_rx.c` invierte los bits de cada bloque de `DATA_W/8` bytes antes de comprobar (64 B en 100G, 4 B en 10G) y detecta el tamaño de bloque en el primer paquete (`-w` para forzarlo). Validado con el paquete capturado en `doc/Medidas.md`: **0 errores** con bloques de 64 B, frente a 120 errores en 8 fronteras sin invertir. El payload llega bien; las medidas de BER de `Medidas.md` hay que repetirlas con esta versión.
+**Solución**: `udp_lfsr_rx.c` invierte los bits de cada bloque de `DATA_W/8` bytes antes de comprobar (64 B en 100G, 4 B en 10G) y detecta el tamaño de bloque en el primer paquete (`-w` para forzarlo). Validado con el paquete capturado en `doc/Medidas.md`: **0 errores** con bloques de 64 B, frente a 120 errores en 8 fronteras sin invertir. Repetida la medida con esta versión: 0 errores (parte 6).
 
 ### 3.8 El PC no recibe 100 Gb/s en un socket
 
-**Síntoma**: el primer comprobador, en Python, recibía unos 4 Gb/s; la versión en C, entre 41 y 46 Gb/s.
+**Síntoma**: el primer comprobador, en Python, recibía unos 4 Gb/s; la versión en C, entre 35 y 46 Gb/s.
 
-**Causa**: el generador envía un único flujo UDP (misma 5-tupla en todos los paquetes). RSS lo lleva siempre a una única cola de RX y a un único core, que no da más. La FPGA sí transmite a velocidad de línea: los contadores de la NIC y `bmon` lo muestran (parte 6).
+**Causa**: el generador enviaba un único flujo UDP (misma 5-tupla en todos los paquetes). La NIC reparte el tráfico entre colas de RX por flujo, así que todo caía en una sola cola y en un solo core, que no da más. La FPGA ya transmitía a velocidad de línea: los contadores de la NIC y `bmon` lo mostraban (parte 6).
 
-**Solución parcial**: `udp_lfsr_rx.c` con `recvmmsg` y comprobación por palabras de 64 bits (unos 78 Gb/s por core con la inversión de bloques). Para comprobar todo el tráfico habría que repartirlo en varios flujos (ver parte 8).
+**Solución**:
+
+1. **Comprobador en C** (`udp_lfsr_rx.c`): `recvmmsg` por lotes y comprobación del PRBS31 con palabras de 64 bits (unos 78 Gb/s por core con la inversión de bloques). Así el comprobador deja de ser el límite.
+2. **8 flujos en el generador** (`udp_packet_generator_top.sv`, parámetro `FLOW_CNT`): el puerto destino rota paquete a paquete entre 5005 y 5012. Se varía el destino, y no el origen, para que cada hilo del receptor escuche en su propio puerto, sin depender del hash del kernel. El deparser de Zircon suma los puertos al checksum UDP a partir de los metadatos, así que el checksum sigue siendo correcto. En `fpga_core.sv`, `FLOW_CNT = 8` en 100G y 1 en 10G (un flujo por carril, como en la etapa 2).
+3. **En el PC**, una regla ntuple por puerto lleva cada flujo a su cola, y `udp_lfsr_rx -j 8 -c 8` atiende cada puerto con un hilo fijado a un core distinto de los de las interrupciones (parte 5). Cada flujo lleva unos 12,4 Gb/s.
+
+La palabra 12 de metadatos tiene el puerto destino en `[15:0]` y el origen en `[31:16]` (comprobado en `test_zircon_ip_tx_deparse.py`). Hasta ahora no se había podido verificar porque los dos valían 5005.
 
 ## 4. Infraestructura de depuración
 
@@ -237,6 +252,37 @@ sudo nmcli con up "<perfil>"
 
 MTU 9000 para el payload de 8960 B (ver la etapa 2, parte 4).
 
+### Un flujo por cola y por core
+
+```bash
+IF=enp4s0f0np0
+
+# 1. Que haya al menos 8 colas, y en qué nodo NUMA está la tarjeta
+ethtool -l $IF
+cat /sys/class/net/$IF/device/numa_node; lscpu | grep NUMA
+
+# 2. Fijar cada flujo a una cola (sin esto, RSS reparte por hash y dos flujos pueden caer en la misma cola)
+sudo ethtool -K $IF ntuple on
+for i in $(seq 0 7); do sudo ethtool -N $IF flow-type udp4 dst-port $((5005+i)) action $i; done
+ethtool -n $IF                                   # muestra las reglas
+
+# 3. Ver en qué CPU procesa cada cola su interrupción
+grep mlx5_comp /proc/interrupts | head -8
+
+# 4. Receptor: hilos en cores distintos de los de las interrupciones, en el mismo nodo NUMA
+sudo sysctl -w net.core.rmem_max=268435456
+sudo ./udp_lfsr_rx -j 8 -c 8 -t 60
+```
+
+En el PC de prueba, las colas 0–7 atienden sus interrupciones en las CPUs 0–7, y los hilos del receptor van a las CPUs 8–15. Si un puerto se queda por debajo del resto, `mpstat -P ALL 1` muestra qué core se satura. Las reglas se quitan con `sudo ethtool -N $IF delete <id>` (los id los da `ethtool -n`).
+
+Anillo de RX y coalescencia: no hacen falta con los 8 flujos. Para volver a los valores por defecto de `mlx5`:
+
+```bash
+sudo ethtool -G $IF rx 1024
+sudo ethtool -C $IF adaptive-rx on
+```
+
 ### Diagnóstico
 
 | Para qué | Comando |
@@ -264,7 +310,33 @@ El `dmesg` del PC muestra avisos de temperatura alta en la ConnectX (`temp_warn 
 
 Máximo teórico: 100 Gb/s / 8 × 9002 / 9026 = **12,47 GB/s**. La FPGA transmite a velocidad de línea.
 
-En la misma captura, `Dropped` (684 k) y `Missed Error` (4,25 M) son paquetes que el PC no consigue procesar (un único flujo, ver 3.8), no errores del enlace. El único `CRC Error` es de la fase de puesta en marcha.
+En la misma captura, `Dropped` (684 k) y `Missed Error` (4,25 M) son paquetes que el PC no conseguía procesar con un único flujo (ver 3.8), no errores del enlace. El único `CRC Error` es de la fase de puesta en marcha.
+
+### Recepción y comprobación del payload completo
+
+Con 8 flujos y `udp_lfsr_rx -j 8 -c 8` (`doc/Medidas.md`):
+
+| Medida | Valor |
+|---|---|
+| Paquetes por segundo | 1 384 200 (unos 173 000 por puerto) |
+| Payload UDP recibido | **99,22 Gb/s** (12,4 Gb/s por puerto) |
+| Máximo teórico | 100 Gb/s / (9026 × 8 bits) = 1 384 888 paquetes/s → 99,27 Gb/s de payload |
+| Errores de payload | **0** en 22 077 155 paquetes (1,58·10¹² bits) |
+| BER (cota, 95 % de confianza) | < 1,9·10⁻¹² |
+
+El PC recibe y comprueba el 99,95 % de los paquetes que caben en la línea, todos sin errores.
+
+Con un único flujo (antes de 3.8), la recepción se quedaba en 35–46 Gb/s, también con 0 errores (BER < 4,6·10⁻¹²).
+
+### BER del enlace (`mlxlink -c`)
+
+| Contador | Valor |
+|---|---|
+| Effective Physical Errors (después del RS-FEC) | 0 |
+| Raw Physical BER (antes del RS-FEC) | 1·10⁻¹¹ |
+| Raw Physical Errors por carril | 2538, 133, 0, 0 |
+
+El RS-FEC (528,514) corrige hasta un BER bruto de unos 2·10⁻⁴: hay unos 7 órdenes de magnitud de margen. Los carriles 0 y 1 tienen algo menos de margen que el 2 y el 3, porque la ecualización del VIO es la misma para los cuatro. No hace falta ajustarla por carril. Los errores brutos son acumulados desde el último borrado de contadores (`Time Since Last Clear`).
 
 ## 7. Comprobador en el PC (`udp_lfsr_rx.c`)
 
@@ -272,30 +344,36 @@ En la misma captura, `Dropped` (684 k) y `Missed Error` (4,25 M) son paquetes qu
 gcc -O3 -march=native -pthread -o udp_lfsr_rx udp_lfsr_rx.c
 ./udp_lfsr_rx -T                     # autoprueba sin red
 sudo sysctl -w net.core.rmem_max=268435456
-sudo ./udp_lfsr_rx                   # Ctrl-C para parar
+sudo ./udp_lfsr_rx -j 8 -c 8         # 8 flujos; Ctrl-C para parar
 ```
 
 | Opción | Función |
 |---|---|
-| `-p` | Puerto UDP (5005 por defecto) |
-| `-j N` | N hilos con `SO_REUSEPORT` (solo sirve con varios flujos) |
+| `-p` | Primer puerto UDP (5005 por defecto) |
+| `-j N` | N hilos: el hilo i escucha en el puerto `p + i` (uno por flujo) |
+| `-c CPU` | Fija el hilo i al core `CPU + i` |
 | `-s N` | Comprueba 1 de cada N paquetes, pero cuenta todos |
 | `-t S` | Termina a los S segundos |
 | `-w B` | Tamaño de bloque a invertir (64 en 100G, 4 en 10G, 0 ninguno); por defecto se detecta |
 | `-f fichero` | Comprueba un payload guardado en un fichero, sin red |
 
-Comprueba en cada paquete la recurrencia b[n] = b[n−31] ⊕ b[n−28], que se sincroniza sola. Cada bit erróneo en el cable produce 3 errores en la recurrencia; el BER final ya está dividido entre 3.
+Comprueba en cada paquete la recurrencia b[n] = b[n−31] ⊕ b[n−28], que se sincroniza sola: los paquetes perdidos no dan falsos errores. Cada bit erróneo en el cable produce 3 errores en la recurrencia; el BER final ya está dividido entre 3.
+
+Salida:
+
+- Cada segundo: paquetes por segundo, Gb/s y errores en total, y con `-j` los Gb/s de cada puerto.
+- Al final: paquetes y errores por puerto, y el BER. Si no hay errores, da la cota superior con un 95 % de confianza: BER < 3 / bits comprobados.
+
+La autoprueba (`-T`) genera paquetes como el generador para anchos de palabra de 8, 32, 64 y 512 bits, comprueba que se detecta el tamaño de bloque correcto y que un bit invertido da 3 errores. También se probó con 8 flujos por la interfaz local, con errores inyectados en un solo puerto.
 
 ## 8. Pendiente
 
 ### Diseño
 
-- **Fijar la ecualización en el build**: ahora el enlace solo funciona si el VIO aplica `probe_out6 = 1` con el post-cursor alto. Hay que pasar los valores encontrados a `GT_TX_DIFFCTRL`, `GT_TX_POSTCURSOR` y `GT_TX_PRECURSOR` en `fpga_core.sv` (siguen a 16/0/0). Valores encontrados: *(anotar diffctrl / postcursor / precursor y el rango que funciona)*. Elegir el centro del rango, no el borde.
-- **Medir el BER** con `mlxlink -c` (`Effective Physical BER`) y con `udp_lfsr_rx` corregido, y repetir las medidas de `doc/Medidas.md`.
+- **Probar el build con la ecualización fija** (20/16/0, ver 3.4) sin el override del VIO (`probe_out6 = 0`), y comprobar que el enlace sube solo al arrancar.
 - **Decidir si se vuelve a `CFG_LOW_LATENCY = 1`** con la ecualización corregida, o si se mantiene el GT con buffer.
-- **Quitar o dejar opcional la depuración** (VIO, ILAs, `debug.xdc`) cuando el enlace esté cerrado.
+- **Quitar o dejar opcional la depuración** (VIO, ILAs, `debug.xdc`) con un parámetro, como indica el commit `8795396`.
 - **Corregir el cruce pre/post-cursor en `taxi_eth_phy_25g_us_gt_ll.sv`**, y comprobar que el build de 10G no cambia.
-- **Repartir el tráfico en varios flujos** (rotar el puerto origen del generador) para que el PC pueda comprobar el payload completo con varios cores.
 - **RX de 100G**: `udp_packet_receiver_top.sv` y `udp_payload_extractor.sv` (commit `aa6f080`) están en el Makefile pero no se instancian.
 
 ### Limpieza

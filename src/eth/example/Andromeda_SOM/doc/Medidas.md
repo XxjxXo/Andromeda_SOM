@@ -125,3 +125,74 @@ Packets 9023744, bytes 80852746240, checked bytes 80852746240, packets with erro
 Recurrence errors 0, approx. BER 0.000e+00
 No errors in 6.468e+11 checked bits: BER < 4.6e-12 (95% confidence, 3/bits)
 ```
+
+## 100 Gbps aumentando a 8 flujos UDP y poniendo un flujo por cola
+
+```console
+# 1. Que haya al menos 8 colas, y en qué nodo NUMA está la tarjeta
+ethtool -l $IF
+cat /sys/class/net/$IF/device/numa_node; lscpu | grep NUMA
+
+# 2. Fijar cada flujo a una cola (sin esto, RSS reparte por hash y dos flujos pueden caer en la misma cola)
+sudo ethtool -K $IF ntuple on
+for i in $(seq 0 7); do sudo ethtool -N $IF flow-type udp4 dst-port $((5005+i)) action $i; done
+ethtool -n $IF                                   # muestra las reglas
+
+# 3. Ver en qué CPU procesa cada cola su interrupción
+grep mlx5_comp /proc/interrupts | head -8
+
+# 4. Ejecutar el programa con 8 núcleos
+sudo sysctl -w net.core.rmem_max=268435456
+sudo ./udp_lfsr_rx -j 8 -c 8 -t 60
+```
+
+```console
+Listening on UDP ports 5005-5012, one thread per port, CPUs 8-15, checking 1 of every 1 packet(s)
+Detected PRBS31: bit-reversed in 64-byte blocks, taps 31/28 (0 errors in the first 8960-byte packet)
+    1.0s   1383095 pkt/s   99.14 Gb/s  errors        0 | pkts 1383238  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+    2.0s   1384184 pkt/s   99.22 Gb/s  errors        0 | pkts 2767607  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+    3.0s   1384157 pkt/s   99.22 Gb/s  errors        0 | pkts 4151932  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+    4.0s   1384208 pkt/s   99.22 Gb/s  errors        0 | pkts 5536313  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+    5.0s   1384211 pkt/s   99.22 Gb/s  errors        0 | pkts 6920689  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+    6.0s   1384213 pkt/s   99.22 Gb/s  errors        0 | pkts 8305121  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+    7.0s   1384209 pkt/s   99.22 Gb/s  errors        0 | pkts 9689499  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+    8.0s   1384341 pkt/s   99.23 Gb/s  errors        0 | pkts 11074017  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+    9.0s   1384093 pkt/s   99.21 Gb/s  errors        0 | pkts 12458290  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+   10.0s   1384287 pkt/s   99.23 Gb/s  errors        0 | pkts 13842752  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+   11.0s   1384049 pkt/s   99.21 Gb/s  errors        0 | pkts 15226974  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+   12.0s   1384262 pkt/s   99.22 Gb/s  errors        0 | pkts 16611401  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+   13.0s   1384275 pkt/s   99.22 Gb/s  errors        0 | pkts 17995833  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+   14.0s   1384166 pkt/s   99.22 Gb/s  errors        0 | pkts 19380182  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+   15.0s   1384155 pkt/s   99.22 Gb/s  errors        0 | pkts 20764560  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+^C   15.9s   1384231 pkt/s   99.22 Gb/s  errors        0 | pkts 22076780  err pkts 0  err bits 0  BER 0.00e+00
+         per port Gb/s: 5005:12.4 5006:12.4 5007:12.4 5008:12.4 5009:12.4 5010:12.4 5011:12.4 5012:12.4
+
+Port 5005: packets 2759326, errors 0, packets with errors 0
+Port 5006: packets 2759643, errors 0, packets with errors 0
+Port 5007: packets 2759739, errors 0, packets with errors 0
+Port 5008: packets 2759693, errors 0, packets with errors 0
+Port 5009: packets 2759740, errors 0, packets with errors 0
+Port 5010: packets 2759651, errors 0, packets with errors 0
+Port 5011: packets 2759713, errors 0, packets with errors 0
+Port 5012: packets 2759650, errors 0, packets with errors 0
+
+Packets 22077155, bytes 197811308800, checked bytes 197811308800, packets with errors 0, short packets 0
+Recurrence errors 0, approx. BER 0.000e+00
+No errors in 1.582e+12 checked bits: BER < 1.9e-12 (95% confidence, 3/bits)
+
+```

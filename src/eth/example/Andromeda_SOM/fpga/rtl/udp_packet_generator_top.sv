@@ -18,7 +18,11 @@ module udp_packet_generator_top #
     parameter logic [31:0] DEFAULT_SRC_IP   = {8'd192, 8'd168, 8'd1, 8'd50},
     parameter logic [31:0] DEFAULT_DEST_IP  = {8'd192, 8'd168, 8'd1, 8'd10},
     parameter logic [15:0] DEFAULT_SRC_PORT = 16'd5005,
-    parameter logic [15:0] DEFAULT_DEST_PORT = 16'd5005
+    parameter logic [15:0] DEFAULT_DEST_PORT = 16'd5005,
+    // Número de flujos UDP: el puerto destino rota paquete a paquete entre
+    // dest_port y dest_port + FLOW_CNT - 1, para que el receptor pueda
+    // repartir el tráfico entre varias colas RX / cores (RSS)
+    parameter FLOW_CNT = 1
 )
 (
     // Relojes y resets
@@ -195,10 +199,14 @@ module udp_packet_generator_top #
     logic [15:0] captured_len_reg = '0;
     logic [15:0] captured_csum_reg = '0;
 
+    localparam FLOW_W = FLOW_CNT > 1 ? $clog2(FLOW_CNT) : 1;
+    logic [FLOW_W-1:0] flow_reg = '0;
+
     always_ff @(posedge clk) begin
         if (rst) begin
             meta_state_reg       <= META_IDLE;
             meta_word_cnt_reg    <= '0;
+            flow_reg             <= '0;
             axis_meta_len.tready <= 1'b1;
             axis_meta.tvalid     <= 1'b0;
         end else begin
@@ -234,12 +242,16 @@ module udp_packet_generator_top #
                             4'd7:    axis_meta.tdata <= {8'd0, 8'd0, 16'h1234, 16'd0, 8'd64, 8'd17}; // DSCP/ECN, IP ID, TTL, proto
                             4'd8:    axis_meta.tdata <= {32'd0, swab32(dest_ip)};
                             4'd10:   axis_meta.tdata <= {32'd0, swab32(src_ip)};
-                            4'd12:   axis_meta.tdata <= {32'd0, src_port, dest_port};
+                            4'd12:   axis_meta.tdata <= {32'd0, src_port, 16'(dest_port + 16'(flow_reg))}; // [15:0] destino, [31:16] origen
                             default: axis_meta.tdata <= '0;
                         endcase
 
                         if (meta_word_cnt_reg == 4'd15) begin
                             meta_state_reg <= META_IDLE;
+                            // siguiente flujo para el próximo paquete
+                            if (FLOW_CNT > 1) begin
+                                flow_reg <= (flow_reg == FLOW_W'(FLOW_CNT-1)) ? '0 : flow_reg + 1'b1;
+                            end
                         end else begin
                             meta_word_cnt_reg <= meta_word_cnt_reg + 1'b1;
                         end
