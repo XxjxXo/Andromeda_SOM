@@ -481,18 +481,24 @@ assign phy_mdio = phy_mdio_t ? 1'bz : phy_mdio_o;*/
 
 wire [7:0] led_int;
 
-// led_int[3:0] is qsfp_rx_status for QSFP lanes 1-4
-// led_int[7:4] is RX frame activity for QSFP lanes 1-4
+// led_int[3:0] is qsfp_rx_status per MAC
+// led_int[4] is GT power good, led_int[5] is TX out of reset on all MACs
+// led_int[6] is a heartbeat in qsfp_tx_clk[0]
 logic [26:0] hb_cnt_reg = '0;
 
 always_ff @(posedge clk_125mhz_int) begin
     hb_cnt_reg <= hb_cnt_reg + 1;
 end
 
-// LED 2: 1 Hz heartbeat (PL configured, pl_clk0 and MMCM running)
-// LED 3: on with at least one lane up, blinks while frames are received
-assign led_n[0] = !hb_cnt_reg[26];
-assign led_n[1] = !((|led_int[3:0]) && !((|led_int[7:4]) && hb_cnt_reg[23]));
+// Debug LEDs for TX bring-up
+// LED 2: blinks at about 1.2 Hz while the GT TX user clock runs (QPLL0 locked),
+//        steady otherwise
+// LED 3: off         GT power not good (or PL not configured)
+//        slow blink  GT power good, TX held in reset (about 1 Hz, pl_clk0)
+//        on          TX out of reset, RX not aligned
+//        fast blink  TX out of reset and RX aligned (about 7.5 Hz)
+assign led_n[0] = !led_int[6];
+assign led_n[1] = !(led_int[4] && (led_int[5] ? (!(|led_int[3:0]) || hb_cnt_reg[23]) : hb_cnt_reg[26]));
 wire logic        qsfp1_modsell;
 wire logic        qsfp1_resetl;
 wire logic        qsfp1_modprsl;

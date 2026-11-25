@@ -40,6 +40,10 @@ lappend extra_ports txpd_in txpdelecidlemode_in rxpd_in
 lappend extra_ports txsysclksel_in txpllclksel_in rxsysclksel_in rxpllclksel_in
 # channel polarity
 lappend extra_ports txpolarity_in rxpolarity_in
+# channel loopback
+lappend extra_ports loopback_in
+# channel TX PRBS generator
+lappend extra_ports txprbssel_in
 # channel TX driver
 lappend extra_ports txelecidle_in txinhibit_in txdiffctrl_in txmaincursor_in txprecursor_in txpostcursor_in
 # channel CDR

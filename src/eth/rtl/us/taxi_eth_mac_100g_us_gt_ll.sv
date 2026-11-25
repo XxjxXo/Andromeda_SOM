@@ -109,7 +109,16 @@ module taxi_eth_mac_100g_us_gt_ll #
     input  wire logic [15:0]        serdes_txctrl1,
     output wire logic [127:0]       serdes_rxdata,
     output wire logic [15:0]        serdes_rxctrl0,
-    output wire logic [15:0]        serdes_rxctrl1
+    output wire logic [15:0]        serdes_rxctrl1,
+
+    /*
+     * Debug: GT loopback (ORed with the APB loopback register)
+     */
+    input  wire logic [2:0]         gt_loopback_in = 3'd0,
+    // Debug: TX driver and PRBS (tx_clk domain)
+    // [4:0] diffctrl, [9:5] postcursor, [14:10] precursor: applied when [19] = 1
+    // [18:15] txprbssel: applied when non-zero (5 = PRBS31)
+    input  wire logic [19:0]        gt_tx_dbg_in = 20'd0
 );
 
 localparam GT_USP = FAMILY == "kintexuplus" || FAMILY == "virtexuplus" || FAMILY == "virtexuplusHBM"
@@ -174,6 +183,12 @@ wire [4:0]   ctrl_txdiffctrl;
 wire [6:0]   ctrl_txmaincursor;
 wire [4:0]   ctrl_txpostcursor;
 wire [4:0]   ctrl_txprecursor;
+
+wire         dbg_tx_ovrd = gt_tx_dbg_in[19];
+wire [4:0]   dbg_txdiffctrl = dbg_tx_ovrd ? gt_tx_dbg_in[4:0] : ctrl_txdiffctrl;
+wire [4:0]   dbg_txpostcursor = dbg_tx_ovrd ? gt_tx_dbg_in[9:5] : ctrl_txpostcursor;
+wire [4:0]   dbg_txprecursor = dbg_tx_ovrd ? gt_tx_dbg_in[14:10] : ctrl_txprecursor;
+wire [3:0]   dbg_txprbssel = gt_tx_dbg_in[18:15] != 4'd0 ? gt_tx_dbg_in[18:15] : ctrl_txprbssel;
 
 wire         ctrl_rxpolarity;
 wire         ctrl_rxprbscntreset;
@@ -636,10 +651,11 @@ end else if (HAS_COMMON && GT_TYPE == "GTY" && GT_USP) begin : xcvr
         .txpolarity_in(ctrl_txpolarity),
         .txelecidle_in(ctrl_txelecidle),
         .txinhibit_in(ctrl_txinhibit),
-        .txdiffctrl_in(ctrl_txdiffctrl),
+        .txprbssel_in(dbg_txprbssel),
+        .txdiffctrl_in(dbg_txdiffctrl),
         .txmaincursor_in(ctrl_txmaincursor),
-        .txprecursor_in(ctrl_txpostcursor),
-        .txpostcursor_in(ctrl_txprecursor),
+        .txprecursor_in(dbg_txprecursor),
+        .txpostcursor_in(dbg_txpostcursor),
 
         .txdata_in(serdes_txdata),
         .txctrl0_in(serdes_txctrl0),
@@ -676,6 +692,7 @@ end else if (HAS_COMMON && GT_TYPE == "GTY" && GT_USP) begin : xcvr
         .rxlpmen_in(gt_rx_lpm_en),
 
         .rxpolarity_in(ctrl_rxpolarity),
+        .loopback_in(ctrl_loopback | gt_loopback_in),
 
         .rxdata_out(serdes_rxdata),
         .rxctrl0_out(serdes_rxctrl0),
@@ -754,10 +771,11 @@ end else if (HAS_COMMON && GT_TYPE == "GTY" && !GT_USP) begin : xcvr
         .txpolarity_in(ctrl_txpolarity),
         .txelecidle_in(ctrl_txelecidle),
         .txinhibit_in(ctrl_txinhibit),
-        .txdiffctrl_in(ctrl_txdiffctrl),
+        .txprbssel_in(dbg_txprbssel),
+        .txdiffctrl_in(dbg_txdiffctrl),
         .txmaincursor_in(ctrl_txmaincursor),
-        .txprecursor_in(ctrl_txpostcursor),
-        .txpostcursor_in(ctrl_txprecursor),
+        .txprecursor_in(dbg_txprecursor),
+        .txpostcursor_in(dbg_txpostcursor),
 
         .txdata_in(serdes_txdata),
         .txctrl0_in(serdes_txctrl0),
@@ -794,6 +812,7 @@ end else if (HAS_COMMON && GT_TYPE == "GTY" && !GT_USP) begin : xcvr
         .rxlpmen_in(gt_rx_lpm_en),
 
         .rxpolarity_in(ctrl_rxpolarity),
+        .loopback_in(ctrl_loopback | gt_loopback_in),
 
         .rxdata_out(serdes_rxdata),
         .rxctrl0_out(serdes_rxctrl0),
@@ -855,10 +874,11 @@ end else if (!HAS_COMMON && GT_TYPE == "GTY") begin : xcvr
         .txpolarity_in(ctrl_txpolarity),
         .txelecidle_in(ctrl_txelecidle),
         .txinhibit_in(ctrl_txinhibit),
-        .txdiffctrl_in(ctrl_txdiffctrl),
+        .txprbssel_in(dbg_txprbssel),
+        .txdiffctrl_in(dbg_txdiffctrl),
         .txmaincursor_in(ctrl_txmaincursor),
-        .txprecursor_in(ctrl_txpostcursor),
-        .txpostcursor_in(ctrl_txprecursor),
+        .txprecursor_in(dbg_txprecursor),
+        .txpostcursor_in(dbg_txpostcursor),
 
         .txdata_in(serdes_txdata),
         .txctrl0_in(serdes_txctrl0),
@@ -895,6 +915,7 @@ end else if (!HAS_COMMON && GT_TYPE == "GTY") begin : xcvr
         .rxlpmen_in(gt_rx_lpm_en),
 
         .rxpolarity_in(ctrl_rxpolarity),
+        .loopback_in(ctrl_loopback | gt_loopback_in),
 
         .rxdata_out(serdes_rxdata),
         .rxctrl0_out(serdes_rxctrl0),

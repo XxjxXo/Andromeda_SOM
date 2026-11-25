@@ -39,6 +39,10 @@ XIicPs IicInstance1;
 #define PLL_I2C_SLAVE_ADDR       				0x68                //Address for slave pll
 #define I2CEXP_I2C_SLAVE_ADDR_CLK_SEL    		0x21               //Address for expander clk sel
 #define I2CEXP_I2C_SLAVE_ADDR_QSFP    			0x20               //Address for expander qsfp
+#define QSFP_I2C_SLAVE_ADDR    					0x50               //QSFP28 module (I2C1, mux 0x75 channel 4)
+
+#define QSFP_I2C_CHUNK							16                 //bytes per I2C read (PS I2C FIFO depth)
+#define QSFP_DIAG_DELAY_S						2                  //module t_init and GT bring-up before reading
 
 #define TX_MAX_LOOPCNT							1000000U
 
@@ -1478,13 +1482,18 @@ i2c_expander_register_t const i2c_expander_registers_21[I2C_EXPANDER_REG_CONFIG_
 	{ 0x03, 0xFF },		//port1 output values
 };
 
+// PCAL6416A 0x20 (PE5 sheet 16): P0 = SFP0/SFP1 TXFAULT, TXDISABLE, LOS, RATE0/1
+// P1_0 = QSFP_LPMODE, P1_1 = QSFP_MODPRS# (input), P1_2-P1_7 not used
+// LPMODE must be 0: with LPMODE = 1 an active module (SR4) stays in low power
+// mode with the lasers off. Output values are written before the direction so
+// the pins never drive the old value.
 i2c_expander_register_t const i2c_expander_registers_20[I2C_EXPANDER_REG_CONFIG_NUM_REGS] =
 {
 	{ 0x4F, 0x00 },		//push-pull configuration for output ports
-	{ 0x06, 0x2D },		//port0 configuration as output ports
-	{ 0x07, 0x00 },		//port1 configuration as output ports
 	{ 0x02, 0xED },		//port0 output values
-	{ 0x03, 0xFF },		//port1 output values
+	{ 0x03, 0xFE },		//port1 output values (P1_0 QSFP_LPMODE = 0)
+	{ 0x06, 0x2D },		//port0 configuration as output ports
+	{ 0x07, 0xFE },		//port1 configuration: P1_0 output, P1_1-P1_7 inputs
 };
 
 //---------------------------------------------------------------------------------------------------------------------------------
@@ -1511,3 +1520,4 @@ uint32_t App_cfg_i2c_master(XIicPs *InstancePtr, uintptr_t DeviceId);
 uint32_t Cfg_MuxInitChannel(XIicPs *InstancePtr, uint16_t MuxIicAddr, uint8_t WriteBuffer);
 uint32_t App_cfg_pll(XIicPs *InstancePtr);
 uint32_t App_cfg_i2cexpander(XIicPs *InstancePtr);
+uint32_t qsfp_diag_main(void);

@@ -7,9 +7,9 @@
 #
 
 # FPGA settings
-FPGA_PART = xcvu9p-flga2104-2L-e
+FPGA_PART = xczu17eg-ffvd1760-1-e
 FPGA_TOP = fpga
-FPGA_ARCH = virtexuplus
+FPGA_ARCH = zynquplus
 
 RTL_DIR = ../rtl
 LIB_DIR = ../lib
@@ -28,6 +28,18 @@ SYN_FILES += $(TAXI_SRC_DIR)/lss/rtl/taxi_mdio_master.sv
 SYN_FILES += $(TAXI_SRC_DIR)/sync/rtl/taxi_sync_reset.sv
 SYN_FILES += $(TAXI_SRC_DIR)/sync/rtl/taxi_sync_signal.sv
 SYN_FILES += $(TAXI_SRC_DIR)/io/rtl/taxi_debounce_switch.sv
+SYN_FILES += $(RTL_DIR)/udp_packet_generator_top.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_len_cksum.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_buffer.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_deparse.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_egress.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_tx_ingress.sv
+SYN_FILES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_concat.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_rx_egress.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_rx_ingress.sv
+SYN_FILES += $(TAXI_SRC_DIR)/zircon/rtl/zircon_ip_rx_parse.sv
+SYN_FILES += $(RTL_DIR)/udp_packet_receiver_top.sv
+SYN_FILES += $(RTL_DIR)/udp_payload_extractor.sv
 
 # XDC files
 XDC_FILES += ../syn/fpga.xdc
@@ -36,6 +48,7 @@ XDC_FILES += ../syn/i2c.xdc
 XDC_FILES += ../syn/phy.xdc
 XDC_FILES += ../syn/qsfp.xdc
 XDC_FILES += ../syn/eth_cmac.xdc
+XDC_FILES += ../syn/debug.xdc
 XDC_FILES += $(TAXI_SRC_DIR)/eth/syn/vivado/taxi_eth_mac_fifo.tcl
 XDC_FILES += $(TAXI_SRC_DIR)/axis/syn/vivado/taxi_axis_async_fifo.tcl
 XDC_FILES += $(TAXI_SRC_DIR)/sync/syn/vivado/taxi_sync_reset.tcl
@@ -46,10 +59,20 @@ IP_TCL_FILES = ../ip/sgmii_pcs_pma_0.tcl
 IP_TCL_FILES += $(TAXI_SRC_DIR)/eth/rtl/us/taxi_eth_mac_100g_us_cmace4.tcl
 IP_TCL_FILES += $(TAXI_SRC_DIR)/eth/rtl/us/taxi_eth_mac_100g_us_gty_156.tcl
 
+# Debug (VIO + ILA for the 100G link)
+IP_TCL_FILES += ../ip/ila_cmac.tcl
+IP_TCL_FILES += ../ip/vio_cmac.tcl
+
+# Block design (Zynq UltraScale+ PS)
+IP_TCL_FILES += ../bd/design_1.tcl
+
 # Configuration
 CONFIG_TCL_FILES = ./config.tcl
 
 include ../common/vivado.mk
+
+# recreate the project if the block design changes
+create_project.tcl: ../bd/design_1/design_1.bd
 
 program: $(PROJECT).bit
 	echo "open_hw_manager" > program.tcl
@@ -61,40 +84,3 @@ program: $(PROJECT).bit
 	echo "program_hw_devices [current_hw_device]" >> program.tcl
 	echo "exit" >> program.tcl
 	vivado -nojournal -nolog -mode batch -source program.tcl
-
-$(PROJECT)_primary.mcs $(PROJECT)_secondary.mcs $(PROJECT)_primary.prm $(PROJECT)_secondary.prm: $(PROJECT).bit
-	echo "write_cfgmem -force -format mcs -size 256 -interface SPIx8 -loadbit {up 0x0000000 $*.bit} -checksum -file $*.mcs" > generate_mcs.tcl
-	echo "exit" >> generate_mcs.tcl
-	vivado -nojournal -nolog -mode batch -source generate_mcs.tcl
-	mkdir -p rev
-	COUNT=100; \
-	while [ -e rev/$*_rev$$COUNT.bit ]; \
-	do COUNT=$$((COUNT+1)); done; \
-	COUNT=$$((COUNT-1)); \
-	for x in _primary.mcs _secondary.mcs _primary.prm _secondary.prm; \
-	do cp $*$$x rev/$*_rev$$COUNT$$x; \
-	echo "Output: rev/$*_rev$$COUNT$$x"; done;
-
-flash: $(PROJECT)_primary.mcs $(PROJECT)_secondary.mcs $(PROJECT)_primary.prm $(PROJECT)_secondary.prm
-	echo "open_hw_manager" > flash.tcl
-	echo "connect_hw_server" >> flash.tcl
-	echo "open_hw_target" >> flash.tcl
-	echo "current_hw_device [lindex [get_hw_devices] 0]" >> flash.tcl
-	echo "refresh_hw_device -update_hw_probes false [current_hw_device]" >> flash.tcl
-	echo "create_hw_cfgmem -hw_device [current_hw_device] [lindex [get_cfgmem_parts {mt25qu01g-spi-x1_x2_x4_x8}] 0]" >> flash.tcl
-	echo "current_hw_cfgmem -hw_device [current_hw_device] [get_property PROGRAM.HW_CFGMEM [current_hw_device]]" >> flash.tcl
-	echo "set_property PROGRAM.FILES [list \"$(PROJECT)_primary.mcs\" \"$(PROJECT)_secondary.mcs\"] [current_hw_cfgmem]" >> flash.tcl
-	echo "set_property PROGRAM.PRM_FILES [list \"$(PROJECT)_primary.prm\" \"$(PROJECT)_secondary.prm\"] [current_hw_cfgmem]" >> flash.tcl
-	echo "set_property PROGRAM.ERASE 1 [current_hw_cfgmem]" >> flash.tcl
-	echo "set_property PROGRAM.CFG_PROGRAM 1 [current_hw_cfgmem]" >> flash.tcl
-	echo "set_property PROGRAM.VERIFY 1 [current_hw_cfgmem]" >> flash.tcl
-	echo "set_property PROGRAM.CHECKSUM 0 [current_hw_cfgmem]" >> flash.tcl
-	echo "set_property PROGRAM.ADDRESS_RANGE {use_file} [current_hw_cfgmem]" >> flash.tcl
-	echo "set_property PROGRAM.UNUSED_PIN_TERMINATION {pull-none} [current_hw_cfgmem]" >> flash.tcl
-	echo "create_hw_bitstream -hw_device [current_hw_device] [get_property PROGRAM.HW_CFGMEM_BITFILE [current_hw_device]]" >> flash.tcl
-	echo "program_hw_devices [current_hw_device]" >> flash.tcl
-	echo "refresh_hw_device [current_hw_device]" >> flash.tcl
-	echo "program_hw_cfgmem -hw_cfgmem [current_hw_cfgmem]" >> flash.tcl
-	echo "boot_hw_device [current_hw_device]" >> flash.tcl
-	echo "exit" >> flash.tcl
-	vivado -nojournal -nolog -mode batch -source flash.tcl

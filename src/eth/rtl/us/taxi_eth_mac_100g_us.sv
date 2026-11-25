@@ -259,7 +259,40 @@ module taxi_eth_mac_100g_us #
     input  wire logic [15:0]          cfg_rx_lfc_opcode = 16'h0001,
     input  wire logic                 cfg_rx_lfc_en = 1'b0,
     input  wire logic [15:0]          cfg_rx_pfc_opcode = 16'h0101,
-    input  wire logic                 cfg_rx_pfc_en = 1'b0
+    input  wire logic                 cfg_rx_pfc_en = 1'b0,
+
+    /*
+     * Debug
+     */
+    // GT loopback for all lanes (0 = normal, 2 = near-end PMA, 1 = near-end PCS)
+    input  wire logic [2:0]           gt_loopback_in = 3'd0,
+    // GT TX driver / PRBS for all lanes (tx_clk domain):
+    // [4:0] diffctrl, [9:5] postcursor, [14:10] precursor, applied when
+    // [19] = 1; [18:15] txprbssel, applied when non-zero (5 = PRBS31)
+    input  wire logic [19:0]          gt_tx_dbg_in = 20'd0,
+    // CMAC RX status (rx_clk domain), only driven with CMACE4:
+    // [0] stat_rx_status            [1] stat_rx_aligned
+    // [2] stat_rx_aligned_err       [3] stat_rx_misaligned
+    // [4] stat_rx_hi_ber            [5] stat_rx_local_fault
+    // [6] stat_rx_internal_local_fault
+    // [7] stat_rx_received_local_fault
+    // [8] stat_rx_remote_fault      [9] stat_rx_rsfec_hi_ser
+    // [10] stat_rx_rsfec_lane_alignment_status
+    // [14:11] stat_rx_rsfec_am_lock[3:0]
+    // [15] stat_rx_rsfec_corrected_cw_inc
+    // [16] stat_rx_rsfec_uncorrected_cw_inc
+    // [17] stat_rx_rsfec_cw_inc
+    // [37:18] stat_rx_synced[19:0]
+    // [45:38] stat_rx_rsfec_lane_mapping[7:0]
+    // [46] stat_rx_total_good_packets
+    // [47] stat_rx_block_lock (lane 0)
+    // [50:48] stat_rx_bad_code[2:0]
+    output wire logic [63:0]          dbg_cmac_rx_stat,
+    // CMAC TX status (tx_clk domain), only driven with CMACE4:
+    // [0] stat_tx_local_fault       [1] stat_tx_total_good_packets
+    // [2] tx_ovfout                 [3] tx_unfout
+    // [4] stat_tx_frame_error
+    output wire logic [7:0]           dbg_cmac_tx_stat
 );
 
 localparam GT_USP = FAMILY == "kintexuplus" || FAMILY == "virtexuplus" || FAMILY == "virtexuplusHBM"
@@ -504,7 +537,13 @@ for (genvar n = 0; n < GT_CNT; n = n + 1) begin : ch
         .serdes_txctrl1(serdes_txctrl1[n]),
         .serdes_rxdata(serdes_rxdata[n]),
         .serdes_rxctrl0(serdes_rxctrl0[n]),
-        .serdes_rxctrl1(serdes_rxctrl1[n])
+        .serdes_rxctrl1(serdes_rxctrl1[n]),
+
+        /*
+         * Debug: GT loopback
+         */
+        .gt_loopback_in(gt_loopback_in),
+        .gt_tx_dbg_in(gt_tx_dbg_in)
     );
 
 end
@@ -582,8 +621,64 @@ if (SIM) begin : cmac
 
     assign rx_status = !rx_rst_out;
 
+    assign dbg_cmac_rx_stat = '0;
+    assign dbg_cmac_tx_stat = '0;
+
 end else if (GT_USP) begin : cmac
     // UltraScale+ CMACE4
+
+    wire [3:0]  dbg_rsfec_am_lock;
+    wire        dbg_rsfec_hi_ser;
+    wire        dbg_rsfec_lane_align;
+    wire        dbg_rsfec_cw_inc;
+    wire        dbg_rsfec_corr_cw_inc;
+    wire        dbg_rsfec_uncorr_cw_inc;
+    wire [7:0]  dbg_rsfec_lane_mapping;
+    wire        dbg_rx_aligned;
+    wire        dbg_rx_aligned_err;
+    wire        dbg_rx_misaligned;
+    wire        dbg_rx_local_fault;
+    wire        dbg_rx_internal_local_fault;
+    wire        dbg_rx_received_local_fault;
+    wire        dbg_rx_remote_fault;
+    wire [19:0] dbg_rx_synced;
+    wire [2:0]  dbg_rx_bad_code;
+    wire        dbg_tx_local_fault;
+    wire        dbg_tx_ovfout;
+    wire        dbg_tx_unfout;
+
+    assign dbg_cmac_rx_stat = {
+        13'd0,
+        dbg_rx_bad_code,
+        rx_block_lock,
+        stat_rx_pkt_good,
+        dbg_rsfec_lane_mapping,
+        dbg_rx_synced,
+        dbg_rsfec_cw_inc,
+        dbg_rsfec_uncorr_cw_inc,
+        dbg_rsfec_corr_cw_inc,
+        dbg_rsfec_am_lock,
+        dbg_rsfec_lane_align,
+        dbg_rsfec_hi_ser,
+        dbg_rx_remote_fault,
+        dbg_rx_received_local_fault,
+        dbg_rx_internal_local_fault,
+        dbg_rx_local_fault,
+        rx_high_ber,
+        dbg_rx_misaligned,
+        dbg_rx_aligned_err,
+        dbg_rx_aligned,
+        rx_status
+    };
+
+    assign dbg_cmac_tx_stat = {
+        3'd0,
+        stat_tx_err_user,
+        dbg_tx_unfout,
+        dbg_tx_ovfout,
+        stat_tx_pkt_good,
+        dbg_tx_local_fault
+    };
 
     taxi_eth_mac_100g_us_cmac cmac_inst (
         .txdata_in(cmac_txdata),
@@ -599,24 +694,24 @@ end else if (GT_USP) begin : cmac
         .ctl_rx_rsfec_enable_correction(1'b1),
         .ctl_rx_rsfec_enable_indication(1'b1),
 
-        .stat_rx_rsfec_am_lock0(),
-        .stat_rx_rsfec_am_lock1(),
-        .stat_rx_rsfec_am_lock2(),
-        .stat_rx_rsfec_am_lock3(),
+        .stat_rx_rsfec_am_lock0(dbg_rsfec_am_lock[0]),
+        .stat_rx_rsfec_am_lock1(dbg_rsfec_am_lock[1]),
+        .stat_rx_rsfec_am_lock2(dbg_rsfec_am_lock[2]),
+        .stat_rx_rsfec_am_lock3(dbg_rsfec_am_lock[3]),
         .stat_rx_rsfec_err_count0_inc(),
         .stat_rx_rsfec_err_count1_inc(),
         .stat_rx_rsfec_err_count2_inc(),
         .stat_rx_rsfec_err_count3_inc(),
-        .stat_rx_rsfec_hi_ser(),
-        .stat_rx_rsfec_lane_alignment_status(),
+        .stat_rx_rsfec_hi_ser(dbg_rsfec_hi_ser),
+        .stat_rx_rsfec_lane_alignment_status(dbg_rsfec_lane_align),
         .stat_rx_rsfec_lane_fill_0(),
         .stat_rx_rsfec_lane_fill_1(),
         .stat_rx_rsfec_lane_fill_2(),
         .stat_rx_rsfec_lane_fill_3(),
-        .stat_rx_rsfec_lane_mapping(),
-        .stat_rx_rsfec_cw_inc(),
-        .stat_rx_rsfec_corrected_cw_inc(),
-        .stat_rx_rsfec_uncorrected_cw_inc(),
+        .stat_rx_rsfec_lane_mapping(dbg_rsfec_lane_mapping),
+        .stat_rx_rsfec_cw_inc(dbg_rsfec_cw_inc),
+        .stat_rx_rsfec_corrected_cw_inc(dbg_rsfec_corr_cw_inc),
+        .stat_rx_rsfec_uncorrected_cw_inc(dbg_rsfec_uncorr_cw_inc),
 
         .rx_axis_tvalid(m_axis_rx.tvalid),
         .rx_axis_tdata(m_axis_rx.tdata),
@@ -712,9 +807,9 @@ end else if (GT_USP) begin : cmac
 
         .rx_clk(rx_clk),
 
-        .stat_rx_aligned(),
-        .stat_rx_aligned_err(),
-        .stat_rx_bad_code(),
+        .stat_rx_aligned(dbg_rx_aligned),
+        .stat_rx_aligned_err(dbg_rx_aligned_err),
+        .stat_rx_bad_code(dbg_rx_bad_code),
         .stat_rx_bad_fcs(),
         .stat_rx_bad_preamble(),
         .stat_rx_bad_sfd(),
@@ -784,13 +879,13 @@ end else if (GT_USP) begin : cmac
         .stat_rx_got_signal_os(),
         .stat_rx_hi_ber(rx_high_ber),
         .stat_rx_inrangeerr(),
-        .stat_rx_internal_local_fault(),
+        .stat_rx_internal_local_fault(dbg_rx_internal_local_fault),
         .stat_rx_jabber(stat_rx_pkt_jabber),
-        .stat_rx_local_fault(),
+        .stat_rx_local_fault(dbg_rx_local_fault),
         .stat_rx_mf_err(),
         .stat_rx_mf_len_err(),
         .stat_rx_mf_repeat_err(),
-        .stat_rx_misaligned(),
+        .stat_rx_misaligned(dbg_rx_misaligned),
         .stat_rx_multicast(stat_rx_pkt_mcast),
         .stat_rx_oversize(stat_rx_err_oversize),
         .stat_rx_packet_64_bytes(),
@@ -809,11 +904,11 @@ end else if (GT_USP) begin : cmac
         .stat_rx_packet_large(),
         .stat_rx_packet_small(),
 
-        .stat_rx_received_local_fault(),
-        .stat_rx_remote_fault(),
+        .stat_rx_received_local_fault(dbg_rx_received_local_fault),
+        .stat_rx_remote_fault(dbg_rx_remote_fault),
         .stat_rx_status(rx_status),
         .stat_rx_stomped_fcs(),
-        .stat_rx_synced(),
+        .stat_rx_synced(dbg_rx_synced),
         .stat_rx_synced_err(),
         .stat_rx_test_pattern_mismatch(),
         .stat_rx_toolong(),
@@ -860,7 +955,7 @@ end else if (GT_USP) begin : cmac
         .stat_tx_bad_fcs(),
         .stat_tx_broadcast(stat_tx_pkt_bcast),
         .stat_tx_frame_error(stat_tx_err_user),
-        .stat_tx_local_fault(),
+        .stat_tx_local_fault(dbg_tx_local_fault),
         .stat_tx_multicast(stat_tx_pkt_mcast),
         .stat_tx_packet_64_bytes(),
         .stat_tx_packet_65_127_bytes(),
@@ -924,8 +1019,8 @@ end else if (GT_USP) begin : cmac
         .tx_axis_tkeep(axis_tx_pad.tkeep),
         .tx_axis_tuser(axis_tx_pad.tuser[0]),
 
-        .tx_ovfout(),
-        .tx_unfout(),
+        .tx_ovfout(dbg_tx_ovfout),
+        .tx_unfout(dbg_tx_unfout),
         .tx_preamblein(56'd0),
 
         .tx_reset_done(tx_rst_out),
@@ -1260,6 +1355,9 @@ end else begin
         .drp_do(),
         .drp_rdy()
     );
+
+    assign dbg_cmac_rx_stat = '0;
+    assign dbg_cmac_tx_stat = '0;
 
 end
 

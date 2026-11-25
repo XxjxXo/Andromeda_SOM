@@ -116,7 +116,13 @@ module taxi_eth_mac_100g_us_ch #
     input  wire logic [15:0]          serdes_txctrl1,
     output wire logic [127:0]         serdes_rxdata,
     output wire logic [15:0]          serdes_rxctrl0,
-    output wire logic [15:0]          serdes_rxctrl1
+    output wire logic [15:0]          serdes_rxctrl1,
+
+    /*
+     * Debug: GT loopback
+     */
+    input  wire logic [2:0]           gt_loopback_in = 3'd0,
+    input  wire logic [19:0]          gt_tx_dbg_in = 20'd0
 );
 
 wire rx_reset_req = 1'b0;
@@ -289,7 +295,13 @@ if (CFG_LOW_LATENCY) begin : gt
         .serdes_txctrl1(gt_txctrl1),
         .serdes_rxdata(gt_rxdata),
         .serdes_rxctrl0(gt_rxctrl0),
-        .serdes_rxctrl1(gt_rxctrl1)
+        .serdes_rxctrl1(gt_rxctrl1),
+
+        /*
+         * Debug: GT loopback
+         */
+        .gt_loopback_in(gt_loopback_in),
+        .gt_tx_dbg_in(gt_tx_dbg_in)
     );
 
 end else if (!CFG_LOW_LATENCY) begin : gt
@@ -387,7 +399,13 @@ end else if (!CFG_LOW_LATENCY) begin : gt
         .serdes_txctrl1(gt_txctrl1),
         .serdes_rxdata(gt_rxdata),
         .serdes_rxctrl0(gt_rxctrl0),
-        .serdes_rxctrl1(gt_rxctrl1)
+        .serdes_rxctrl1(gt_rxctrl1),
+
+        /*
+         * Debug: GT loopback
+         */
+        .gt_loopback_in(gt_loopback_in),
+        .gt_tx_dbg_in(gt_tx_dbg_in)
     );
 
 end else begin

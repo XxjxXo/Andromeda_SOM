@@ -9,7 +9,8 @@
 set params [dict create]
 
 # MAC configuration
-dict set params CFG_LOW_LATENCY "1"
+# 0: GTY with TX buffer (no TX buffer bypass / phase alignment)
+dict set params CFG_LOW_LATENCY "0"
 dict set params COMBINED_MAC_PCS "1"
 dict set params MAC_DATA_W "512"
 

@@ -480,6 +480,167 @@ uint32_t App_cfg_i2cexpander(XIicPs *InstancePtr)
 }
 
 
+//---------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------- QSFP28 diagnostics -----------------------------
+// Lee el estado del QSFP28 de la PE5 y lo saca por UART. No escribe nada en el modulo salvo el
+// selector de pagina (byte 127 = 0). Mapa de memoria: SFF-8636.
+
+static uint32_t Qsfp_ReadRegs(XIicPs *InstancePtr, uint16_t SlaveAddr, uint8_t Offset, uint8_t *Buffer, uint16_t Count)
+{
+    uint32_t Status;
+
+    for (uint16_t Done = 0u; Done < Count; Done += QSFP_I2C_CHUNK)
+    {
+        uint8_t Addr = (uint8_t)(Offset + Done);
+        uint16_t Len = ((Count - Done) < QSFP_I2C_CHUNK) ? (Count - Done) : QSFP_I2C_CHUNK;
+
+        while (XIicPs_BusIsBusy(InstancePtr));
+        Status = MasterSendI2C(InstancePtr, &Addr, 1, SlaveAddr);
+        if (Status != XFSBL_SUCCESS)
+        {
+            xil_printf("Error enviando offset 0x%02X a 0x%02X\r\n", Addr, SlaveAddr);
+            return XFSBL_FAILURE;
+        }
+
+        while (XIicPs_BusIsBusy(InstancePtr));
+        Status = XIicPs_MasterRecvPolled(InstancePtr, &Buffer[Done], Len, SlaveAddr);
+        if (Status != XFSBL_SUCCESS)
+        {
+            xil_printf("Error leyendo %d bytes desde 0x%02X de 0x%02X\r\n", Len, Addr, SlaveAddr);
+            return XFSBL_FAILURE;
+        }
+    }
+
+    while (XIicPs_BusIsBusy(InstancePtr));
+    return XFSBL_SUCCESS;
+}
+
+static void Qsfp_PrintString(const char *Label, const uint8_t *Buffer, uint8_t Len)
+{
+    char Str[17];
+
+    for (uint8_t i = 0u; i < Len; i++)
+    {
+        Str[i] = ((Buffer[i] >= 0x20u) && (Buffer[i] < 0x7Fu)) ? (char)Buffer[i] : '.';
+    }
+    Str[Len] = '\0';
+    xil_printf("%s%s\r\n", Label, Str);
+}
+
+uint32_t qsfp_diag_main(void)
+{
+    uint32_t Status;
+    uint8_t Port1 = 0u;
+    uint8_t Cmd;
+    uint8_t Latched[128];
+    uint8_t Lower[128];
+    uint8_t Upper[128];
+
+    xil_printf("------------------------------------------------\r\n");
+    xil_printf("----------------- QSFP28 DIAG ------------------\r\n");
+
+    // 1. Nivel de los pines del QSFP en el expansor 0x20 (I2C0, mux 0x74 canal 4)
+    Status = Cfg_MuxInitChannel(&IicInstance0, CFG_MUX_ADDR_1, MUX_CHANNEL_4);
+    if (Status == XFSBL_SUCCESS)
+    {
+        Cmd = 0x01;     // input port 1
+        while (XIicPs_BusIsBusy(&IicInstance0));
+        Status = MasterSendI2C(&IicInstance0, &Cmd, 1, I2CEXP_I2C_SLAVE_ADDR_QSFP);
+        while (XIicPs_BusIsBusy(&IicInstance0));
+        if (Status == XFSBL_SUCCESS)
+        {
+            Status = XIicPs_MasterRecvPolled(&IicInstance0, &Port1, 1, I2CEXP_I2C_SLAVE_ADDR_QSFP);
+        }
+    }
+    if (Status != XFSBL_SUCCESS)
+    {
+        xil_printf("Error leyendo el expansor 0x20\r\n");
+    }
+    else
+    {
+        xil_printf("Expansor 0x20 puerto 1 = 0x%02X: QSFP_LPMODE = %d (debe ser 0), QSFP_MODPRS# = %d (0 = modulo presente)\r\n",
+                   Port1, Port1 & 1u, (Port1 >> 1) & 1u);
+    }
+
+    // 2. Esperar a que el modulo salga de bajo consumo y los GTY transmitan
+    xil_printf("Esperando %d s antes de leer el modulo...\r\n", QSFP_DIAG_DELAY_S);
+    sleep(QSFP_DIAG_DELAY_S);
+
+    // 3. Memoria del modulo 0x50 (I2C1, mux 0x75 canal 4)
+    Status = Cfg_MuxInitChannel(&IicInstance1, CFG_MUX_ADDR_2, MUX_CHANNEL_4);
+    if (Status != XFSBL_SUCCESS)
+    {
+        xil_printf("Error seleccionando el canal 4 del mux 0x75\r\n");
+        return XFSBL_FAILURE;
+    }
+
+    uint8_t PageBuffer[2] = { 127, 0x00 };   // pagina superior 00h
+    while (XIicPs_BusIsBusy(&IicInstance1));
+    Status = MasterSendI2C(&IicInstance1, PageBuffer, 2, QSFP_I2C_SLAVE_ADDR);
+    if (Status != XFSBL_SUCCESS)
+    {
+        xil_printf("El modulo QSFP (0x50) no responde: sin alimentacion, en reset o no insertado\r\n");
+        return XFSBL_FAILURE;
+    }
+
+    // Los flags (bytes 3-14) se borran al leerlos: la primera lectura da lo acumulado desde
+    // el arranque, la segunda el estado actual
+    Status  = Qsfp_ReadRegs(&IicInstance1, QSFP_I2C_SLAVE_ADDR, 0, Latched, 128);
+    usleep(100000);
+    Status |= Qsfp_ReadRegs(&IicInstance1, QSFP_I2C_SLAVE_ADDR, 0, Lower, 128);
+    Status |= Qsfp_ReadRegs(&IicInstance1, QSFP_I2C_SLAVE_ADDR, 128, Upper, 128);
+    if (Status != XFSBL_SUCCESS)
+    {
+        return XFSBL_FAILURE;
+    }
+
+    // 4. Identificacion (pagina superior 00h, indices relativos a 128)
+    xil_printf("Identificador 0x%02X (0x11 = QSFP28), revision 0x%02X\r\n", Lower[0], Lower[1]);
+    Qsfp_PrintString("Fabricante: ", &Upper[148 - 128], 16);
+    Qsfp_PrintString("Modelo:     ", &Upper[168 - 128], 16);
+    Qsfp_PrintString("N. serie:   ", &Upper[196 - 128], 16);
+    xil_printf("Ext. identifier 0x%02X, compliance 0x%02X, ext. compliance 0x%02X (0x02 = 100GBASE-SR4)\r\n",
+               Upper[129 - 128], Upper[131 - 128], Upper[192 - 128]);
+
+    // 5. Estado y control
+    xil_printf("Estado (byte 2) 0x%02X: Data_Not_Ready = %d, IntL = %d, Flat_mem = %d\r\n",
+               Lower[2], Lower[2] & 1u, (Lower[2] >> 1) & 1u, (Lower[2] >> 2) & 1u);
+    xil_printf("Power control (byte 93) 0x%02X: Power_override = %d, Power_set (bajo consumo) = %d, High_Power_Class_En = %d\r\n",
+               Lower[93], Lower[93] & 1u, (Lower[93] >> 1) & 1u, (Lower[93] >> 2) & 1u);
+    xil_printf("TX disable (byte 86) 0x%02X, CDR control (byte 98) 0x%02X (TX CDR bits 7-4, RX CDR bits 3-0)\r\n",
+               Lower[86], Lower[98]);
+
+    int16_t Temp = (int16_t)((Lower[22] << 8) | Lower[23]);
+    uint16_t Vcc = (uint16_t)((Lower[26] << 8) | Lower[27]);
+    xil_printf("Temperatura %d C, Vcc %d mV\r\n", Temp / 256, Vcc / 10);
+
+    xil_printf("Flags acumulados: LOS 0x%02X, TX fault 0x%02X, LOL 0x%02X\r\n", Latched[3], Latched[4], Latched[5]);
+    xil_printf("Flags actuales:   LOS 0x%02X, TX fault 0x%02X, LOL 0x%02X\r\n", Lower[3], Lower[4], Lower[5]);
+
+    // 6. Por canal. TX LOS = no llega senal electrica de la FPGA, TX LOL = el CDR de TX no engancha
+    for (uint8_t Ch = 0u; Ch < 4u; Ch++)
+    {
+        uint16_t RxPwr = (uint16_t)((Lower[34 + 2*Ch] << 8) | Lower[35 + 2*Ch]);   // 0,1 uW
+        uint16_t Bias  = (uint16_t)((Lower[42 + 2*Ch] << 8) | Lower[43 + 2*Ch]);   // 2 uA
+        uint16_t TxPwr = (uint16_t)((Lower[50 + 2*Ch] << 8) | Lower[51 + 2*Ch]);   // 0,1 uW
+        uint32_t BiasUa = (uint32_t)Bias * 2u;
+
+        xil_printf("Canal %d: TX_LOS %d RX_LOS %d TX_FAULT %d TX_LOL %d RX_LOL %d TX_DIS %d | "
+                   "bias %d.%03d mA, TX %d.%d uW, RX %d.%d uW\r\n",
+                   Ch + 1,
+                   (Lower[3] >> (4 + Ch)) & 1u, (Lower[3] >> Ch) & 1u,
+                   (Lower[4] >> Ch) & 1u,
+                   (Lower[5] >> (4 + Ch)) & 1u, (Lower[5] >> Ch) & 1u,
+                   (Lower[86] >> Ch) & 1u,
+                   BiasUa / 1000u, BiasUa % 1000u,
+                   TxPwr / 10u, TxPwr % 10u,
+                   RxPwr / 10u, RxPwr % 10u);
+    }
+
+    xil_printf("------------------------------------------------\r\n");
+    return XFSBL_SUCCESS;
+}
+
 uint32_t peripherials_cfg_init_main(void)
 {        
     xil_printf("------------------------------------------------\r\n");

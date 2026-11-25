@@ -43,6 +43,7 @@
 #define PMU_GLOBAL_DDR_CNTRL_RET_MASK    ((u32)0X00000001U)
 
 /************************** Function Prototypes ******************************/
+u32 qsfp_diag_main(void);
 
 /************************** Variable Definitions *****************************/
 #ifdef XFSBL_BS
@@ -67,6 +68,8 @@ u32 XFsbl_HookAfterBSDownload(void )
 	/**
 	 * Add the code here
 	 */
+	/* Diagnostic only: a failure here does not stop the boot */
+	(void)qsfp_diag_main();
 
 	return Status;
 }

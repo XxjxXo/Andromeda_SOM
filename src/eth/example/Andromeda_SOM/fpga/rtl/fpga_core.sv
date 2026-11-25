@@ -464,16 +464,37 @@ wire qsfp_rx_rst[MAC_CNT];
 wire qsfp_rx_status[MAC_CNT];
 wire qsfp_rx_act[MAC_CNT];
 
+wire [0:0] qsfp_gtpowergood;
+
+// Debug LEDs for TX bring-up (qsfp_rx_act is not driven by the RX sink):
+// led[3:0] RX status per MAC
+// led[4]   GT power good
+// led[5]   TX out of reset on all MACs
+// led[6]   heartbeat in qsfp_tx_clk[0] (322.27 MHz / 2^28, about 1.2 Hz)
+logic [MAC_CNT-1:0] qsfp_tx_up;
+
 for (genvar n = 0; n < MAC_CNT; n = n + 1) begin
     assign led[n] = qsfp_rx_status[n];
-    assign led[4+n] = qsfp_rx_act[n];
+    assign qsfp_tx_up[n] = !qsfp_tx_rst[n];
 end
 
-wire [0:0] qsfp_gtpowergood;
+for (genvar n = MAC_CNT; n < 4; n = n + 1) begin
+    assign led[n] = 1'b0;
+end
+
+logic [27:0] qsfp_tx_hb_reg = '0;
+
+always_ff @(posedge qsfp_tx_clk[0]) begin
+    qsfp_tx_hb_reg <= qsfp_tx_hb_reg + 1;
+end
+
+assign led[4] = &qsfp_gtpowergood;
+assign led[5] = &qsfp_tx_up;
+assign led[6] = qsfp_tx_hb_reg[27];
+assign led[7] = 1'b0;
 
 wire qsfp1_mgt_refclk_0;
 wire qsfp1_mgt_refclk_0_int;
-wire qsfp1_mgt_refclk_0_bufg;
 
 wire qsfp_rst;
 
@@ -485,7 +506,6 @@ if (SIM) begin
 
     assign qsfp1_mgt_refclk_0 = qsfp1_mgt_refclk_0_p;
     assign qsfp1_mgt_refclk_0_int = qsfp1_mgt_refclk_0_p;
-    assign qsfp1_mgt_refclk_0_bufg = qsfp1_mgt_refclk_0_int;
 
 end else begin
 
@@ -497,23 +517,17 @@ end else begin
         .ODIV2 (qsfp1_mgt_refclk_0_int)
     );
 
-    BUFG_GT bufg_gt_qsfp1_mgt_refclk_0_inst (
-        .CE      (&qsfp_gtpowergood),
-        .CEMASK  (1'b1),
-        .CLR     (1'b0),
-        .CLRMASK (1'b1),
-        .DIV     (3'd0),
-        .I       (qsfp1_mgt_refclk_0_int),
-        .O       (qsfp1_mgt_refclk_0_bufg)
-    );
-
 end
 
 taxi_sync_reset #(
     .N(4)
 )
+// qsfp_rst drives xcvr_ctrl_rst, whose clock is clk_125mhz. (It used to be
+// synchronised to the refclk through a BUFG_GT gated by gtpowergood; with
+// the buffered GT IP that BUFG_GT could not be routed: its CE/CLR need a
+// BUFG_GT_SYNC.)
 qsfp_sync_reset_inst (
-    .clk(qsfp1_mgt_refclk_0_bufg),
+    .clk(clk_125mhz),
     .rst(rst_125mhz),
     .out(qsfp_rst)
 );
@@ -563,6 +577,15 @@ for (genvar n = 0; n < 1; n = n + 1) begin : gt_quad
 
     if (MAC_DATA_W == 512) begin: mac
 
+        // Debug signals (VIO / ILA), see the debug block after mac_inst
+        wire [2:0]  dbg_gt_loopback;
+        wire [19:0] dbg_gt_tx_vio;
+        wire [19:0] dbg_gt_tx;
+        wire        dbg_rx_rst;
+        wire        dbg_tx_rst;
+        wire [63:0] dbg_cmac_rx_stat;
+        wire [7:0]  dbg_cmac_tx_stat;
+
         taxi_eth_mac_100g_us #(
             .SIM(SIM),
             .VENDOR(VENDOR),
@@ -572,6 +595,13 @@ for (genvar n = 0; n < 1; n = n + 1) begin : gt_quad
 
             // GT config
             .CFG_LOW_LATENCY(CFG_LOW_LATENCY),
+
+            // GT TX swing and de-emphasis (Taxi defaults), RX in DFE mode
+            // (RX alignment verified on the PE5 with this setting)
+            .GT_TX_DIFFCTRL('{CNT{5'd16}}),
+            .GT_TX_POSTCURSOR('{CNT{5'd0}}),
+            .GT_TX_PRECURSOR('{CNT{5'd0}}),
+            .GT_RX_LPM_EN('0),
 
             // GT type
             .GT_TYPE("GTY"),
@@ -620,10 +650,10 @@ for (genvar n = 0; n < 1; n = n + 1) begin : gt_quad
              * MAC clocks
              */
             .rx_clk(qsfp_rx_clk[n]),
-            .rx_rst_in(1'b0),
+            .rx_rst_in(dbg_rx_rst),
             .rx_rst_out(qsfp_rx_rst[n]),
             .tx_clk(qsfp_tx_clk[n]),
-            .tx_rst_in(1'b0),
+            .tx_rst_in(dbg_tx_rst),
             .tx_rst_out(qsfp_tx_rst[n]),
 
             /*
@@ -783,7 +813,184 @@ for (genvar n = 0; n < 1; n = n + 1) begin : gt_quad
             .cfg_rx_lfc_opcode(16'h0001),
             .cfg_rx_lfc_en(1'b0),
             .cfg_rx_pfc_opcode(16'h0101),
-            .cfg_rx_pfc_en(1'b0)
+            .cfg_rx_pfc_en(1'b0),
+
+            /*
+             * Debug
+             */
+            .gt_loopback_in(dbg_gt_loopback),
+            .gt_tx_dbg_in(dbg_gt_tx),
+            .dbg_cmac_rx_stat(dbg_cmac_rx_stat),
+            .dbg_cmac_tx_stat(dbg_cmac_tx_stat)
+        );
+
+        // ------------------------------------------------------------------
+        // Debug: VIO (GT loopback, resets, clock frequency) and ILAs (CMAC)
+        // ------------------------------------------------------------------
+
+        // Clock frequency measurement against clk_125mhz (PS PL_CLK0).
+        // The gate toggles every 2^27 cycles of clk_125mhz (1.073741824 s);
+        // each clock counts its own cycles between gate edges.
+        // Expected count at 322.265625 MHz: 346030080 (1 ppm = ~346 counts).
+        logic [26:0] dbg_gate_cnt_reg = '0;
+        logic        dbg_gate_tgl_reg = 1'b0;
+
+        always_ff @(posedge clk_125mhz) begin
+            dbg_gate_cnt_reg <= dbg_gate_cnt_reg + 1;
+            if (&dbg_gate_cnt_reg) begin
+                dbg_gate_tgl_reg <= !dbg_gate_tgl_reg;
+            end
+        end
+
+        wire dbg_gate_tx;
+        wire dbg_gate_rx;
+
+        taxi_sync_signal #(.WIDTH(1), .N(3))
+        dbg_gate_tx_sync_inst (
+            .clk(qsfp_tx_clk[n]),
+            .in(dbg_gate_tgl_reg),
+            .out(dbg_gate_tx)
+        );
+
+        taxi_sync_signal #(.WIDTH(1), .N(3))
+        dbg_gate_rx_sync_inst (
+            .clk(qsfp_rx_clk[n]),
+            .in(dbg_gate_tgl_reg),
+            .out(dbg_gate_rx)
+        );
+
+        logic        dbg_gate_tx_d_reg = 1'b0;
+        logic [31:0] dbg_tx_cyc_reg = '0;
+        logic [31:0] dbg_tx_freq_reg = '0;
+
+        always_ff @(posedge qsfp_tx_clk[n]) begin
+            dbg_gate_tx_d_reg <= dbg_gate_tx;
+            if (dbg_gate_tx ^ dbg_gate_tx_d_reg) begin
+                dbg_tx_freq_reg <= dbg_tx_cyc_reg + 1;
+                dbg_tx_cyc_reg <= '0;
+            end else begin
+                dbg_tx_cyc_reg <= dbg_tx_cyc_reg + 1;
+            end
+        end
+
+        logic        dbg_gate_rx_d_reg = 1'b0;
+        logic [31:0] dbg_rx_cyc_reg = '0;
+        logic [31:0] dbg_rx_freq_reg = '0;
+
+        always_ff @(posedge qsfp_rx_clk[n]) begin
+            dbg_gate_rx_d_reg <= dbg_gate_rx;
+            if (dbg_gate_rx ^ dbg_gate_rx_d_reg) begin
+                dbg_rx_freq_reg <= dbg_rx_cyc_reg + 1;
+                dbg_rx_cyc_reg <= '0;
+            end else begin
+                dbg_rx_cyc_reg <= dbg_rx_cyc_reg + 1;
+            end
+        end
+
+        // Bring counts and status to clk_125mhz for the VIO. The counts are
+        // stable for ~1 s between updates; a reading taken right at an update
+        // can be inconsistent, so read twice if a value looks odd.
+        wire [31:0] dbg_tx_freq_sync;
+        wire [31:0] dbg_rx_freq_sync;
+        wire [15:0] dbg_rx_stat_sync;
+        wire [1:0]  dbg_tx_stat_sync;
+
+        taxi_sync_signal #(.WIDTH(32), .N(2))
+        dbg_tx_freq_sync_inst (
+            .clk(clk_125mhz),
+            .in(dbg_tx_freq_reg),
+            .out(dbg_tx_freq_sync)
+        );
+
+        taxi_sync_signal #(.WIDTH(32), .N(2))
+        dbg_rx_freq_sync_inst (
+            .clk(clk_125mhz),
+            .in(dbg_rx_freq_reg),
+            .out(dbg_rx_freq_sync)
+        );
+
+        // RX: status, aligned, aligned_err, misaligned, hi_ber, local_fault,
+        // internal_local_fault, received_local_fault, remote_fault,
+        // rsfec_hi_ser, rsfec_lane_alignment_status, rsfec_am_lock[3:0],
+        // plus TX reset state
+        taxi_sync_signal #(.WIDTH(16), .N(2))
+        dbg_rx_stat_sync_inst (
+            .clk(clk_125mhz),
+            .in({qsfp_rx_rst[n], dbg_cmac_rx_stat[14:0]}),
+            .out(dbg_rx_stat_sync)
+        );
+
+        // TX: local_fault, TX reset state
+        taxi_sync_signal #(.WIDTH(2), .N(2))
+        dbg_tx_stat_sync_inst (
+            .clk(clk_125mhz),
+            .in({qsfp_tx_rst[n], dbg_cmac_tx_stat[0]}),
+            .out(dbg_tx_stat_sync)
+        );
+
+        // VIO (clk_125mhz)
+        //   probe_in0  [31:0] TX clock count per gate (expected 346030080)
+        //   probe_in1  [31:0] RX clock count per gate (recovered from the
+        //                     far end; equals TX in loopback)
+        //   probe_in2  [15:0] {rx_rst, dbg_cmac_rx_stat[14:0]}
+        //   probe_in3  [1:0]  {tx_rst, stat_tx_local_fault}
+        //   probe_in4  [0:0]  gtpowergood
+        //   probe_out0 [2:0]  GT loopback: 0 normal, 2 near-end PMA,
+        //                     1 near-end PCS, 4 far-end PMA, 6 far-end PCS
+        //   probe_out1 [0:0]  RX reset (pulse 1 -> 0 after changing loopback)
+        //   probe_out2 [0:0]  TX reset
+        //   probe_out3 [4:0]  TX diffctrl  (all lanes, init 16)
+        //   probe_out4 [4:0]  TX postcursor (all lanes, init 0)
+        //   probe_out5 [4:0]  TX precursor  (all lanes, init 0)
+        //   probe_out6 [0:0]  1 = apply probe_out3..5 (0 = build parameters)
+        //   probe_out7 [3:0]  TX PRBS: 0 = CMAC data, 5 = PRBS31
+        wire [4:0] dbg_vio_txdiffctrl;
+        wire [4:0] dbg_vio_txpostcursor;
+        wire [4:0] dbg_vio_txprecursor;
+        wire       dbg_vio_tx_ovrd;
+        wire [3:0] dbg_vio_txprbssel;
+
+        assign dbg_gt_tx_vio = {dbg_vio_tx_ovrd, dbg_vio_txprbssel,
+            dbg_vio_txprecursor, dbg_vio_txpostcursor, dbg_vio_txdiffctrl};
+
+        taxi_sync_signal #(.WIDTH(20), .N(2))
+        dbg_gt_tx_sync_inst (
+            .clk(qsfp_tx_clk[n]),
+            .in(dbg_gt_tx_vio),
+            .out(dbg_gt_tx)
+        );
+
+        vio_cmac
+        dbg_vio_inst (
+            .clk(clk_125mhz),
+            .probe_in0(dbg_tx_freq_sync),
+            .probe_in1(dbg_rx_freq_sync),
+            .probe_in2(dbg_rx_stat_sync),
+            .probe_in3(dbg_tx_stat_sync),
+            .probe_in4(qsfp_gtpowergood[n]),
+            .probe_out0(dbg_gt_loopback),
+            .probe_out1(dbg_rx_rst),
+            .probe_out2(dbg_tx_rst),
+            .probe_out3(dbg_vio_txdiffctrl),
+            .probe_out4(dbg_vio_txpostcursor),
+            .probe_out5(dbg_vio_txprecursor),
+            .probe_out6(dbg_vio_tx_ovrd),
+            .probe_out7(dbg_vio_txprbssel)
+        );
+
+        // ILA on the RX clock: full CMAC RX status (see taxi_eth_mac_100g_us
+        // for the bit map of dbg_cmac_rx_stat)
+        ila_cmac
+        dbg_ila_rx_inst (
+            .clk(qsfp_rx_clk[n]),
+            .probe0(dbg_cmac_rx_stat)
+        );
+
+        // ILA on the TX clock: CMAC TX status and TX reset
+        ila_cmac
+        dbg_ila_tx_inst (
+            .clk(qsfp_tx_clk[n]),
+            .probe0({55'd0, qsfp_tx_rst[n], dbg_cmac_tx_stat})
         );
 
     end else begin: mac
